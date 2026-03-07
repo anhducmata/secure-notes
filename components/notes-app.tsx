@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import useSWR from "swr"
-import { Plus, Search, ChevronLeft } from "lucide-react"
+import { Plus, Search, ChevronLeft, Check, Loader2 } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
 
@@ -21,6 +21,18 @@ interface User {
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
+// Debounce hook
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value)
+
+  useEffect(() => {
+    const handler = setTimeout(() => setDebouncedValue(value), delay)
+    return () => clearTimeout(handler)
+  }, [value, delay])
+
+  return debouncedValue
+}
+
 export function NotesApp() {
   const [user, setUser] = useState<User | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
@@ -28,21 +40,60 @@ export function NotesApp() {
   const [selectedNote, setSelectedNote] = useState<Note | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [isMobile, setIsMobile] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle")
+  const [pendingChanges, setPendingChanges] = useState<Note | null>(null)
 
-  // Fetch notes from /api/notes (falls back to demo data if S3 not configured)
-  const { data, isLoading } = useSWR<{ notes: Array<Omit<Note, "date"> & { date: string }> }>(
-    "/api/notes",
+  const userId = user?.email || "anonymous"
+
+  // Fetch notes from Redis
+  const { data, isLoading, mutate } = useSWR<{ notes: Array<Omit<Note, "date"> & { date: string }> }>(
+    `/api/notes?userId=${encodeURIComponent(userId)}`,
     fetcher
   )
+
+  // Debounce pending changes for auto-save (500ms)
+  const debouncedNote = useDebounce(pendingChanges, 500)
+
+  // Auto-save effect
+  useEffect(() => {
+    if (!debouncedNote) return
+
+    const saveNote = async () => {
+      setSaveStatus("saving")
+      try {
+        await fetch(`/api/notes?userId=${encodeURIComponent(userId)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...debouncedNote,
+            date: debouncedNote.date instanceof Date 
+              ? debouncedNote.date.toISOString() 
+              : debouncedNote.date,
+          }),
+        })
+        setSaveStatus("saved")
+        // Reset to idle after showing "saved" briefly
+        setTimeout(() => setSaveStatus("idle"), 1500)
+      } catch (err) {
+        console.error("[v0] Auto-save failed:", err)
+        setSaveStatus("idle")
+      }
+    }
+
+    saveNote()
+  }, [debouncedNote, userId])
 
   // Hydrate notes from API response
   useEffect(() => {
     if (data?.notes) {
-      setLocalNotes(
-        data.notes.map((n) => ({ ...n, date: new Date(n.date) }))
-      )
+      setLocalNotes(data.notes.map((n) => ({ ...n, date: new Date(n.date) })))
     }
   }, [data])
+
+  // Refetch when user changes
+  useEffect(() => {
+    mutate()
+  }, [userId, mutate])
 
   // Mobile check
   useEffect(() => {
@@ -72,19 +123,23 @@ export function NotesApp() {
 
   const handleNoteChange = (content: string) => {
     if (!selectedNote) return
-    const updated = localNotes.map((n) => (n.id === selectedNote.id ? { ...n, content } : n))
+    const updatedNote = { ...selectedNote, content, date: new Date() }
+    const updated = localNotes.map((n) => (n.id === selectedNote.id ? updatedNote : n))
     setLocalNotes(updated)
-    setSelectedNote({ ...selectedNote, content })
+    setSelectedNote(updatedNote)
+    setPendingChanges(updatedNote) // Trigger auto-save
   }
 
   const handleTitleChange = (title: string) => {
     if (!selectedNote) return
-    const updated = localNotes.map((n) => (n.id === selectedNote.id ? { ...n, title } : n))
+    const updatedNote = { ...selectedNote, title, date: new Date() }
+    const updated = localNotes.map((n) => (n.id === selectedNote.id ? updatedNote : n))
     setLocalNotes(updated)
-    setSelectedNote({ ...selectedNote, title })
+    setSelectedNote(updatedNote)
+    setPendingChanges(updatedNote) // Trigger auto-save
   }
 
-  const handleCreateNote = () => {
+  const handleCreateNote = async () => {
     const newNote: Note = {
       id: Date.now().toString(),
       title: "New Note",
@@ -94,12 +149,54 @@ export function NotesApp() {
     }
     setLocalNotes([newNote, ...localNotes])
     setSelectedNote(newNote)
+
+    // Save to Redis immediately
+    try {
+      await fetch(`/api/notes?userId=${encodeURIComponent(userId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...newNote, date: newNote.date.toISOString() }),
+      })
+    } catch (err) {
+      console.error("[v0] Failed to create note:", err)
+    }
   }
 
-  const handleDeleteNote = () => {
+  const handleDeleteNote = async () => {
     if (!selectedNote) return
+    
     setLocalNotes(localNotes.filter((n) => n.id !== selectedNote.id))
     setSelectedNote(null)
+
+    // Delete from Redis
+    try {
+      await fetch(
+        `/api/notes?userId=${encodeURIComponent(userId)}&noteId=${selectedNote.id}`,
+        { method: "DELETE" }
+      )
+    } catch (err) {
+      console.error("[v0] Failed to delete note:", err)
+    }
+  }
+
+  // ── Save status indicator ─────────────────────────────────────────────────
+  const SaveIndicator = () => {
+    if (saveStatus === "idle") return null
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-gray-400">
+        {saveStatus === "saving" ? (
+          <>
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span>Saving...</span>
+          </>
+        ) : (
+          <>
+            <Check className="h-3 w-3 text-green-500" />
+            <span className="text-green-500">Saved</span>
+          </>
+        )}
+      </div>
+    )
   }
 
   // ── Shared UI fragments ───────────────────────────────────────────────────
@@ -130,9 +227,12 @@ export function NotesApp() {
                   <ChevronLeft className="mr-1 h-4 w-4" />
                   Notes
                 </button>
-                <button onClick={handleDeleteNote} className="text-sm text-red-500" aria-label="Delete note">
-                  Delete
-                </button>
+                <div className="flex items-center gap-3">
+                  <SaveIndicator />
+                  <button onClick={handleDeleteNote} className="text-sm text-red-500" aria-label="Delete note">
+                    Delete
+                  </button>
+                </div>
               </div>
               <input
                 type="text"
@@ -248,17 +348,20 @@ export function NotesApp() {
               <div className="flex items-center justify-between mb-2">
                 <input
                   type="text"
-                  className="w-full bg-transparent text-2xl font-semibold text-yellow-500 focus:outline-none"
+                  className="flex-1 bg-transparent text-2xl font-semibold text-yellow-500 focus:outline-none"
                   value={selectedNote.title}
                   onChange={(e) => handleTitleChange(e.target.value)}
                 />
-                <button
-                  onClick={handleDeleteNote}
-                  className="ml-4 text-sm text-red-500 transition-opacity hover:opacity-70"
-                  aria-label="Delete note"
-                >
-                  Delete
-                </button>
+                <div className="flex items-center gap-4 ml-4">
+                  <SaveIndicator />
+                  <button
+                    onClick={handleDeleteNote}
+                    className="text-sm text-red-500 transition-opacity hover:opacity-70"
+                    aria-label="Delete note"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
               <p className="text-sm text-gray-400">{formatDate(selectedNote.date)}</p>
             </div>
