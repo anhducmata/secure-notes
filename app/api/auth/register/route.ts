@@ -64,6 +64,9 @@ export async function POST(request: Request) {
         from: "Notes App <onboarding@freenotes.space>",
         to: email,
         subject: "Verify your email address",
+        replyTo: [
+          "anhducmata@gmail.com"
+        ],
         html: `
           <!DOCTYPE html>
           <html>
