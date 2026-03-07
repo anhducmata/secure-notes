@@ -59,3 +59,26 @@ body {
   outline: 2px solid rgb(var(--accent-color));
   outline-offset: 2px;
 }
+
+/* Avatar menu pop animation */
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Auth modal backdrop blur */
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Input placeholder color */
+input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
