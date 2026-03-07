@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server"
 import { redis } from "@/lib/redis"
 import { Resend } from "resend"
+import bcrypt from "bcryptjs"
 import crypto from "crypto"
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-// Simple password hashing using crypto (for demo - use bcrypt in production)
-function hashPassword(password: string): string {
-  return crypto.createHash("sha256").update(password).digest("hex")
-}
+const BCRYPT_SALT_ROUNDS = 12
 
 function generateToken(): string {
   return crypto.randomBytes(32).toString("hex")
@@ -38,11 +36,14 @@ export async function POST(request: Request) {
     const verificationToken = generateToken()
     const tokenExpiry = Date.now() + 24 * 60 * 60 * 1000 // 24 hours
 
+    // Hash password with bcrypt
+    const hashedPassword = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS)
+
     // Store pending user (not verified yet)
     const userData = {
       email: email.toLowerCase(),
       name,
-      password: hashPassword(password),
+      password: hashedPassword,
       verified: false,
       createdAt: Date.now(),
     }

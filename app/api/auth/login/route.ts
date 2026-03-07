@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server"
 import { redis } from "@/lib/redis"
+import bcrypt from "bcryptjs"
 import crypto from "crypto"
-
-function hashPassword(password: string): string {
-  return crypto.createHash("sha256").update(password).digest("hex")
-}
 
 function generateSessionToken(): string {
   return crypto.randomBytes(32).toString("hex")
@@ -32,8 +29,9 @@ export async function POST(request: Request) {
 
     const userData = JSON.parse(userDataStr as string)
 
-    // Verify password
-    if (userData.password !== hashPassword(password)) {
+    // Verify password with bcrypt
+    const isValidPassword = await bcrypt.compare(password, userData.password)
+    if (!isValidPassword) {
       return NextResponse.json(
         { error: "Invalid email or password" },
         { status: 401 }

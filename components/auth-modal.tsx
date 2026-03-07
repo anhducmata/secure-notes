@@ -8,7 +8,7 @@ type Tab = "signin" | "signup"
 interface AuthModalProps {
   isOpen: boolean
   onClose: () => void
-  onSignIn: (user: { name: string; email: string }) => void
+  onSignIn: (user: { name: string; email: string; encryptionKey: string }) => void
 }
 
 export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
@@ -49,7 +49,8 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
         return
       }
 
-      onSignIn({ name: data.user.name, email: data.user.email })
+      // Pass password as encryption key (used for client-side note encryption)
+      onSignIn({ name: data.user.name, email: data.user.email, encryptionKey: signInPassword })
       onClose()
     } catch {
       setError("Something went wrong. Please try again.")

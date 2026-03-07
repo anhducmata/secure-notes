@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import useSWR from "swr"
-import { Plus, Search, ChevronLeft, Check, Loader2 } from "lucide-react"
+import { Plus, Search, ChevronLeft, Check, Loader2, Lock } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
 import {
@@ -30,13 +30,10 @@ interface EncryptedNoteFromServer {
 interface User {
   name: string
   email: string
+  encryptionKey?: string // User's password used as encryption key
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const DEMO_ENCRYPTION_PASSWORD = "demo-secure-key-123"
-
-const fetcher = (url: string) => fetch(url).then((r) => r.json())
+const fetcher = (url: string) => fetch(url, { credentials: "include" }).then((r) => r.json())
 
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
@@ -56,6 +53,7 @@ function useDebounce<T>(value: T, delay: number): T {
 export function NotesApp() {
   const [user, setUser] = useState<User | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
   const [localNotes, setLocalNotes] = useState<DecryptedNoteWithMeta[]>([])
   const [selectedNote, setSelectedNote] = useState<DecryptedNoteWithMeta | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -63,29 +61,48 @@ export function NotesApp() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle")
   const [pendingChanges, setPendingChanges] = useState<DecryptedNoteWithMeta | null>(null)
 
-  const [encryptionPassword] = useState(DEMO_ENCRYPTION_PASSWORD)
+  // Encryption key derived from user's password (set during login)
+  const encryptionPassword = user?.encryptionKey || ""
 
-  const userId = user?.email || "anonymous"
+  // Check for existing session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const res = await fetch("/api/auth/session", { credentials: "include" })
+        const data = await res.json()
+        if (data.user) {
+          // User has session but we need the encryption key
+          // Show auth modal to get password for decryption
+          setUser({ ...data.user, encryptionKey: undefined })
+        }
+      } catch (e) {
+        console.error("Session check failed:", e)
+      } finally {
+        setAuthChecked(true)
+      }
+    }
+    checkSession()
+  }, [])
 
-  // Fetch encrypted notes from Redis
+  // Fetch encrypted notes from S3 (only when user is fully authenticated with encryption key)
   const { data, isLoading, mutate } = useSWR<{
     notes: EncryptedNoteFromServer[]
     encrypted: boolean
-  }>(`/api/notes?userId=${encodeURIComponent(userId)}`, fetcher)
+    authenticated?: boolean
+  }>(
+    user?.encryptionKey ? "/api/notes" : null,
+    fetcher
+  )
 
   // Decrypt notes when data arrives
   useEffect(() => {
-    if (!data?.notes) return
+    if (!data?.notes || !encryptionPassword) return
 
     const decryptAllNotes = async () => {
       const decrypted: DecryptedNoteWithMeta[] = []
 
       for (const encNote of data.notes) {
         try {
-          if (encNote.encryptedData.ciphertext.startsWith("DEMO_PLACEHOLDER")) {
-            continue
-          }
-
           const decryptedContent = await decryptNote(encNote.encryptedData, encryptionPassword)
           decrypted.push({
             id: encNote.id,
@@ -95,7 +112,8 @@ export function NotesApp() {
             folder: encNote.folder,
           })
         } catch {
-          // Note couldn't be decrypted
+          // Note couldn't be decrypted (wrong key or corrupted data)
+          console.error("Failed to decrypt note:", encNote.id)
         }
       }
 
@@ -110,7 +128,7 @@ export function NotesApp() {
 
   // Auto-save effect with encryption
   useEffect(() => {
-    if (!debouncedNote) return
+    if (!debouncedNote || !encryptionPassword) return
 
     const saveNoteEncrypted = async () => {
       setSaveStatus("saving")
@@ -121,9 +139,10 @@ export function NotesApp() {
           encryptionPassword
         )
 
-        await fetch(`/api/notes?userId=${encodeURIComponent(userId)}`, {
+        await fetch("/api/notes", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify({
             id: debouncedNote.id,
             encryptedData: encrypted,
@@ -142,12 +161,14 @@ export function NotesApp() {
     }
 
     saveNoteEncrypted()
-  }, [debouncedNote, userId, encryptionPassword])
+  }, [debouncedNote, encryptionPassword])
 
-  // Refetch when user changes
+  // Refetch when user logs in with encryption key
   useEffect(() => {
-    mutate()
-  }, [userId, mutate])
+    if (user?.encryptionKey) {
+      mutate()
+    }
+  }, [user?.encryptionKey, mutate])
 
   // Mobile check
   useEffect(() => {
@@ -196,6 +217,11 @@ export function NotesApp() {
   }
 
   const handleCreateNote = async () => {
+    if (!encryptionPassword) {
+      setAuthOpen(true)
+      return
+    }
+
     const newNote: DecryptedNoteWithMeta = {
       id: Date.now().toString(),
       title: "New Note",
@@ -213,9 +239,10 @@ export function NotesApp() {
         encryptionPassword
       )
 
-      await fetch(`/api/notes?userId=${encodeURIComponent(userId)}`, {
+      await fetch("/api/notes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           id: newNote.id,
           encryptedData: encrypted,
@@ -236,12 +263,24 @@ export function NotesApp() {
 
     try {
       await fetch(
-        `/api/notes?userId=${encodeURIComponent(userId)}&noteId=${selectedNote.id}`,
-        { method: "DELETE" }
+        `/api/notes?noteId=${selectedNote.id}`,
+        { method: "DELETE", credentials: "include" }
       )
     } catch {
       // Silent fail
     }
+  }
+
+  // Sign out handler
+  const handleSignOut = async () => {
+    try {
+      await fetch("/api/auth/session", { method: "DELETE", credentials: "include" })
+    } catch (e) {
+      console.error("Sign out failed:", e)
+    }
+    setUser(null)
+    setLocalNotes([])
+    setSelectedNote(null)
   }
 
   // ── Save status indicator ─────────────────────────────────────────────────
@@ -269,12 +308,47 @@ export function NotesApp() {
   const avatarButton = (
     <div className="absolute bottom-5 left-5 z-20">
       <AvatarButton
-        user={user}
+        user={user?.encryptionKey ? user : null}
         onClick={() => setAuthOpen(true)}
-        onSignOut={() => setUser(null)}
+        onSignOut={handleSignOut}
       />
     </div>
   )
+
+  // ── Not logged in view ─────────────────────────────────────────────────────
+  if (!user?.encryptionKey) {
+    return (
+      <div className="relative flex h-screen w-full items-center justify-center bg-black text-white">
+        <div className="text-center max-w-sm px-6">
+          <div
+            className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl"
+            style={{ background: "rgba(234,179,8,0.15)", border: "1px solid rgba(234,179,8,0.25)" }}
+          >
+            <Lock className="h-8 w-8 text-yellow-500" />
+          </div>
+          <h1 className="text-2xl font-semibold text-white mb-2">Welcome to Notes</h1>
+          <p className="text-gray-400 mb-6 text-sm leading-relaxed">
+            Your notes are encrypted end-to-end. Sign in to access your secure notes across all devices.
+          </p>
+          <button
+            onClick={() => setAuthOpen(true)}
+            className="w-full rounded-xl py-3 text-sm font-semibold transition-all active:scale-[0.98]"
+            style={{
+              background: "linear-gradient(135deg, rgb(234,179,8) 0%, rgb(202,138,4) 100%)",
+              color: "rgb(0,0,0)",
+              boxShadow: "0 4px 16px rgba(234,179,8,0.3)",
+            }}
+          >
+            Sign In
+          </button>
+          <p className="mt-4 text-xs text-gray-500">
+            {authChecked ? "Create an account or sign in to get started" : "Checking session..."}
+          </p>
+        </div>
+        <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
+      </div>
+    )
+  }
 
   // ── Mobile view ───────────────────────────────────────────────────────────
   if (isMobile) {

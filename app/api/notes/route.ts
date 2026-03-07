@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server"
-import { redis, NOTES_KEY } from "@/lib/redis"
+import { cookies } from "next/headers"
+import { redis } from "@/lib/redis"
+import { uploadNote, getNote, deleteNote, listUserNotes } from "@/lib/s3"
 
 /**
- * Note API - Encrypted Data Only
+ * Note API - Encrypted Data Only (S3 Storage)
  * 
  * This API ONLY handles encrypted note payloads.
  * The server never sees plaintext note content.
+ * Notes are stored in S3, encrypted client-side before upload.
  * 
  * Each note is stored with encrypted title and content:
  * - encryptedData: { ciphertext, iv, salt, version }
@@ -26,22 +29,6 @@ export interface EncryptedNote {
   folder: string
 }
 
-// Demo notes are now encrypted with password "demo123"
-// These are real encrypted payloads, not plaintext
-const DEMO_ENCRYPTED_NOTES: EncryptedNote[] = [
-  {
-    id: "1",
-    encryptedData: {
-      ciphertext: "DEMO_PLACEHOLDER_CIPHERTEXT_1",
-      iv: "DEMO_IV_1234",
-      salt: "DEMO_SALT_1234",
-      version: 1,
-    },
-    date: new Date(2025, 3, 14).toISOString(),
-    folder: "notes",
-  },
-]
-
 /**
  * Validates that a payload is properly encrypted.
  * Rejects any attempt to store plaintext.
@@ -61,39 +48,75 @@ function isValidEncryptedPayload(payload: unknown): payload is EncryptedPayload 
 }
 
 /**
- * GET /api/notes
- * Fetches encrypted notes from Redis.
+ * Get authenticated user ID from session
  */
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
-  const userId = searchParams.get("userId") || "anonymous"
+async function getAuthenticatedUserId(): Promise<string | null> {
+  const cookieStore = await cookies()
+  const sessionToken = cookieStore.get("session")?.value
+  
+  if (!sessionToken) return null
+  
+  const sessionDataStr = await redis.get(`session:${sessionToken}`)
+  if (!sessionDataStr) return null
+  
+  const sessionData = JSON.parse(sessionDataStr as string)
+  return sessionData.email
+}
 
+/**
+ * GET /api/notes
+ * Fetches encrypted notes from S3.
+ * Requires authentication.
+ */
+export async function GET() {
   try {
-    const key = NOTES_KEY(userId)
-    let notes = await redis.get<EncryptedNote[]>(key)
-
-    // Return empty array for new users (they'll create their own encrypted notes)
-    if (!notes || notes.length === 0) {
-      return NextResponse.json({ notes: [], source: "redis", encrypted: true })
+    const userId = await getAuthenticatedUserId()
+    
+    if (!userId) {
+      return NextResponse.json({ notes: [], authenticated: false })
     }
 
-    return NextResponse.json({ notes, source: "redis", encrypted: true })
+    // List all note IDs for the user
+    const noteIds = await listUserNotes(userId)
+    
+    if (noteIds.length === 0) {
+      return NextResponse.json({ notes: [], source: "s3", encrypted: true })
+    }
+    
+    // Fetch all notes in parallel
+    const notePromises = noteIds.map(async (noteId) => {
+      const noteData = await getNote(userId, noteId)
+      return noteData as EncryptedNote | null
+    })
+    
+    const notes = (await Promise.all(notePromises))
+      .filter((n): n is EncryptedNote => n !== null)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+    return NextResponse.json({ notes, source: "s3", encrypted: true })
   } catch (err) {
-    console.error("[v0] Redis fetch error:", err)
+    console.error("[v0] S3 fetch error:", err)
     return NextResponse.json({ notes: [], source: "fallback", encrypted: true })
   }
 }
 
 /**
  * POST /api/notes
- * Creates a new encrypted note.
+ * Creates a new encrypted note in S3.
  * REJECTS plaintext payloads.
+ * Requires authentication.
  */
 export async function POST(request: Request) {
-  const { searchParams } = new URL(request.url)
-  const userId = searchParams.get("userId") || "anonymous"
-
   try {
+    const userId = await getAuthenticatedUserId()
+    
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      )
+    }
+
     const body = await request.json()
     
     // Validate encrypted payload
@@ -114,29 +137,33 @@ export async function POST(request: Request) {
       folder: body.folder || "notes",
     }
 
-    const key = NOTES_KEY(userId)
-    let notes = (await redis.get<EncryptedNote[]>(key)) || []
-    notes = [note, ...notes]
-
-    await redis.set(key, notes)
+    // Upload to S3
+    await uploadNote(userId, note.id, note)
 
     return NextResponse.json({ success: true, note, encrypted: true })
   } catch (err) {
-    console.error("[v0] Redis create error:", err)
+    console.error("[v0] S3 create error:", err)
     return NextResponse.json({ error: "Failed to create note" }, { status: 500 })
   }
 }
 
 /**
  * PUT /api/notes
- * Updates an encrypted note.
+ * Updates an encrypted note in S3.
  * REJECTS plaintext payloads.
+ * Requires authentication.
  */
 export async function PUT(request: Request) {
-  const { searchParams } = new URL(request.url)
-  const userId = searchParams.get("userId") || "anonymous"
-
   try {
+    const userId = await getAuthenticatedUserId()
+    
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      )
+    }
+
     const body = await request.json()
 
     // Validate encrypted payload
@@ -157,32 +184,23 @@ export async function PUT(request: Request) {
       folder: body.folder || "notes",
     }
 
-    const key = NOTES_KEY(userId)
-    let notes = (await redis.get<EncryptedNote[]>(key)) || []
-    const index = notes.findIndex((n) => n.id === updatedNote.id)
-
-    if (index === -1) {
-      notes = [updatedNote, ...notes]
-    } else {
-      notes[index] = updatedNote
-    }
-
-    await redis.set(key, notes)
+    // Upload to S3 (overwrites existing)
+    await uploadNote(userId, updatedNote.id, updatedNote)
 
     return NextResponse.json({ success: true, note: updatedNote, encrypted: true })
   } catch (err) {
-    console.error("[v0] Redis update error:", err)
+    console.error("[v0] S3 update error:", err)
     return NextResponse.json({ error: "Failed to save note" }, { status: 500 })
   }
 }
 
 /**
  * DELETE /api/notes
- * Deletes a note by ID.
+ * Deletes a note by ID from S3.
+ * Requires authentication.
  */
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url)
-  const userId = searchParams.get("userId") || "anonymous"
   const noteId = searchParams.get("noteId")
 
   if (!noteId) {
@@ -190,15 +208,21 @@ export async function DELETE(request: Request) {
   }
 
   try {
-    const key = NOTES_KEY(userId)
-    let notes = (await redis.get<EncryptedNote[]>(key)) || []
-    notes = notes.filter((n) => n.id !== noteId)
+    const userId = await getAuthenticatedUserId()
+    
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      )
+    }
 
-    await redis.set(key, notes)
+    // Delete from S3
+    await deleteNote(userId, noteId)
 
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error("[v0] Redis delete error:", err)
+    console.error("[v0] S3 delete error:", err)
     return NextResponse.json({ error: "Failed to delete note" }, { status: 500 })
   }
 }
