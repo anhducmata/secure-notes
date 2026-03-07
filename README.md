@@ -2,6 +2,9 @@
 
 This is a [Next.js](https://nextjs.org) project.
 
+## Product site
+[FreeNotes.space](http://FreeNotes.space)
+
 ## Getting Started
 
 First, run the development server:
