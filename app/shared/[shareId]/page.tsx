@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { AlertCircle, Loader2, Lock, Copy, Check } from "lucide-react"
+import { importShareKey, decryptFromShare } from "@/lib/crypto"
 
 interface SharedNote {
   title: string
@@ -49,28 +50,65 @@ export default function SharedNotePage({ params }: { params: Promise<{ shareId: 
     }
   }
 
-  // Fetch the shared note (one-time)
+  // Fetch and decrypt the shared note (one-time)
   useEffect(() => {
     if (!shareId) return
 
     const fetchNote = async () => {
       try {
-        const res = await fetch(`/api/share/${shareId}`)
-        const data = await res.json()
+        // Extract the decryption key from the URL fragment.
+        // Fragments are never sent to the server, so the key stays client-side.
+        const hash = window.location.hash
+        const keyMatch = hash.match(/[#&]key=([^&]*)/)
+        if (!keyMatch) {
+          setError("Invalid share link: missing decryption key")
+          setIsLoading(false)
+          return
+        }
+        const keyBase64 = decodeURIComponent(keyMatch[1])
 
-        if (!res.ok) {
-          setError(data.message || data.error || "Failed to load note")
+        let res: Response
+        let data: { message?: string; error?: string; note?: { encryptedData: { ciphertext: string; iv: string }; sharedAt: string } }
+        try {
+          res = await fetch(`/api/share/${shareId}`)
+          data = await res.json()
+        } catch {
+          setError("Failed to load the shared note. Please check your connection.")
+          setIsLoading(false)
           return
         }
 
-        setNote(data.note)
-        
-        // Auto-copy content when note is loaded
-        if (data.note?.content) {
-          copyToClipboard(data.note.content, true)
+        if (!res.ok) {
+          setError(data.message || data.error || "Failed to load note")
+          setIsLoading(false)
+          return
         }
-      } catch {
-        setError("Failed to load the shared note")
+
+        // Decrypt the note content client-side using the key from the URL fragment
+        let shareKey: CryptoKey
+        try {
+          shareKey = await importShareKey(keyBase64)
+        } catch {
+          setError("Invalid share link: the decryption key is malformed.")
+          setIsLoading(false)
+          return
+        }
+
+        try {
+          const { encryptedData, sharedAt } = data.note!
+          const plaintext = await decryptFromShare(encryptedData.ciphertext, encryptedData.iv, shareKey)
+          const { title, content } = JSON.parse(plaintext) as { title: string; content: string }
+
+          const decryptedNote: SharedNote = { title, content, sharedAt }
+          setNote(decryptedNote)
+
+          // Auto-copy content when note is loaded
+          if (content) {
+            copyToClipboard(content, true)
+          }
+        } catch {
+          setError("Failed to decrypt the shared note. The link may be corrupted or the key is incorrect.")
+        }
       } finally {
         setIsLoading(false)
       }
