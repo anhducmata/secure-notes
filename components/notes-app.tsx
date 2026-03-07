@@ -2,16 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react"
 import useSWR from "swr"
-import { Plus, Search, ChevronLeft, Check, Loader2, Shield, Bug } from "lucide-react"
+import { Plus, Search, ChevronLeft, Check, Loader2 } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
-import {
-  SecurityBadge,
-  TrustPanel,
-  SecurityInfoModal,
-  SecurityDebugPanel,
-  EncryptionIndicator,
-} from "@/components/security-panel"
 import {
   encryptNote,
   decryptNote,
@@ -41,8 +34,6 @@ interface User {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-// In production, this would be derived from the user's password after login
-// For demo purposes, we use a static key. Users would enter their own password.
 const DEMO_ENCRYPTION_PASSWORD = "demo-secure-key-123"
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
@@ -69,15 +60,9 @@ export function NotesApp() {
   const [selectedNote, setSelectedNote] = useState<DecryptedNoteWithMeta | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [isMobile, setIsMobile] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "encrypting">("idle")
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle")
   const [pendingChanges, setPendingChanges] = useState<DecryptedNoteWithMeta | null>(null)
 
-  // Security UI state
-  const [securityModalOpen, setSecurityModalOpen] = useState(false)
-  const [debugPanelOpen, setDebugPanelOpen] = useState(false)
-  const [currentEncryptedPayload, setCurrentEncryptedPayload] = useState<EncryptedPayload | null>(null)
-
-  // Encryption password (in production, derived from user's login)
   const [encryptionPassword] = useState(DEMO_ENCRYPTION_PASSWORD)
 
   const userId = user?.email || "anonymous"
@@ -97,7 +82,6 @@ export function NotesApp() {
 
       for (const encNote of data.notes) {
         try {
-          // Skip demo placeholder notes
           if (encNote.encryptedData.ciphertext.startsWith("DEMO_PLACEHOLDER")) {
             continue
           }
@@ -110,9 +94,8 @@ export function NotesApp() {
             date: new Date(encNote.date),
             folder: encNote.folder,
           })
-        } catch (err) {
-          console.error("[v0] Failed to decrypt note:", encNote.id, err)
-          // Note couldn't be decrypted (wrong password or corrupted)
+        } catch {
+          // Note couldn't be decrypted
         }
       }
 
@@ -130,19 +113,13 @@ export function NotesApp() {
     if (!debouncedNote) return
 
     const saveNoteEncrypted = async () => {
-      setSaveStatus("encrypting")
+      setSaveStatus("saving")
 
       try {
-        // Encrypt note content before sending
         const encrypted = await encryptNote(
           { title: debouncedNote.title, content: debouncedNote.content },
           encryptionPassword
         )
-
-        // Store for debug panel
-        setCurrentEncryptedPayload(encrypted)
-
-        setSaveStatus("saving")
 
         await fetch(`/api/notes?userId=${encodeURIComponent(userId)}`, {
           method: "PUT",
@@ -159,8 +136,7 @@ export function NotesApp() {
 
         setSaveStatus("saved")
         setTimeout(() => setSaveStatus("idle"), 1500)
-      } catch (err) {
-        console.error("[v0] Auto-save failed:", err)
+      } catch {
         setSaveStatus("idle")
       }
     }
@@ -199,7 +175,6 @@ export function NotesApp() {
 
   const handleNoteSelect = useCallback((note: DecryptedNoteWithMeta) => {
     setSelectedNote(note)
-    setCurrentEncryptedPayload(null) // Clear until next save
   }, [])
 
   const handleNoteChange = (content: string) => {
@@ -232,14 +207,11 @@ export function NotesApp() {
     setLocalNotes([newNote, ...localNotes])
     setSelectedNote(newNote)
 
-    // Encrypt and save to Redis
     try {
       const encrypted = await encryptNote(
         { title: newNote.title, content: newNote.content },
         encryptionPassword
       )
-
-      setCurrentEncryptedPayload(encrypted)
 
       await fetch(`/api/notes?userId=${encodeURIComponent(userId)}`, {
         method: "POST",
@@ -251,8 +223,8 @@ export function NotesApp() {
           folder: newNote.folder,
         }),
       })
-    } catch (err) {
-      console.error("[v0] Failed to create note:", err)
+    } catch {
+      // Silent fail
     }
   }
 
@@ -261,15 +233,14 @@ export function NotesApp() {
 
     setLocalNotes(localNotes.filter((n) => n.id !== selectedNote.id))
     setSelectedNote(null)
-    setCurrentEncryptedPayload(null)
 
     try {
       await fetch(
         `/api/notes?userId=${encodeURIComponent(userId)}&noteId=${selectedNote.id}`,
         { method: "DELETE" }
       )
-    } catch (err) {
-      console.error("[v0] Failed to delete note:", err)
+    } catch {
+      // Silent fail
     }
   }
 
@@ -278,12 +249,7 @@ export function NotesApp() {
     if (saveStatus === "idle") return null
     return (
       <div className="flex items-center gap-1.5 text-xs text-gray-400">
-        {saveStatus === "encrypting" ? (
-          <>
-            <Shield className="h-3 w-3 animate-pulse text-yellow-500" />
-            <span className="text-yellow-500">Encrypting...</span>
-          </>
-        ) : saveStatus === "saving" ? (
+        {saveStatus === "saving" ? (
           <>
             <Loader2 className="h-3 w-3 animate-spin" />
             <span>Saving...</span>
@@ -297,21 +263,6 @@ export function NotesApp() {
       </div>
     )
   }
-
-  // ── Security Header Bar ───────────────────────────────────────────────────
-  const SecurityHeader = () => (
-    <div className="flex items-center gap-2">
-      <SecurityBadge onClick={() => setSecurityModalOpen(true)} />
-      <button
-        onClick={() => setDebugPanelOpen(!debugPanelOpen)}
-        className="flex h-7 w-7 items-center justify-center rounded-full transition-colors hover:bg-white/10"
-        style={{ color: debugPanelOpen ? "rgb(234,179,8)" : "rgba(255,255,255,0.3)" }}
-        title="Toggle security debug panel"
-      >
-        <Bug className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  )
 
   // ── Shared UI fragments ───────────────────────────────────────────────────
 
@@ -342,7 +293,6 @@ export function NotesApp() {
                   Notes
                 </button>
                 <div className="flex items-center gap-3">
-                  <EncryptionIndicator isEncrypted={!!currentEncryptedPayload} />
                   <SaveIndicator />
                   <button onClick={handleDeleteNote} className="text-sm text-red-500" aria-label="Delete note">
                     Delete
@@ -372,10 +322,7 @@ export function NotesApp() {
         ) : (
           <div className="flex h-full flex-col">
             <div className="border-b border-gray-800 p-4">
-              <div className="flex items-center justify-between mb-4">
-                <h1 className="text-xl font-semibold text-yellow-500">Notes</h1>
-                <SecurityHeader />
-              </div>
+              <h1 className="text-xl font-semibold text-yellow-500 mb-4">Notes</h1>
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                 <input
@@ -406,14 +353,6 @@ export function NotesApp() {
         {avatarButton}
 
         <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
-        <SecurityInfoModal isOpen={securityModalOpen} onClose={() => setSecurityModalOpen(false)} />
-        <SecurityDebugPanel
-          isOpen={debugPanelOpen}
-          onClose={() => setDebugPanelOpen(false)}
-          encryptedPayload={currentEncryptedPayload}
-          isEncrypted={!!currentEncryptedPayload}
-          plaintextLength={selectedNote ? selectedNote.title.length + selectedNote.content.length : undefined}
-        />
       </div>
     )
   }
@@ -424,10 +363,7 @@ export function NotesApp() {
       {/* Notes list panel */}
       <div className="w-80 border-r border-gray-800 flex flex-col">
         <div className="border-b border-gray-800 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h1 className="text-xl font-semibold text-yellow-500">Notes</h1>
-            <SecurityHeader />
-          </div>
+          <h1 className="text-xl font-semibold text-yellow-500 mb-4">Notes</h1>
           <div className="relative">
             <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input
@@ -449,11 +385,6 @@ export function NotesApp() {
           >
             <Plus className="h-5 w-5" />
           </button>
-        </div>
-
-        {/* Trust Panel */}
-        <div className="border-b border-gray-800 p-4">
-          <TrustPanel />
         </div>
 
         <div className="flex-1 overflow-y-auto momentum-scroll pb-20">
@@ -483,7 +414,6 @@ export function NotesApp() {
                   onChange={(e) => handleTitleChange(e.target.value)}
                 />
                 <div className="flex items-center gap-4 ml-4">
-                  <EncryptionIndicator isEncrypted={!!currentEncryptedPayload} />
                   <SaveIndicator />
                   <button
                     onClick={handleDeleteNote}
@@ -511,9 +441,7 @@ export function NotesApp() {
         ) : (
           <div className="flex h-full items-center justify-center text-gray-500">
             <div className="text-center">
-              <Shield className="mx-auto mb-4 h-12 w-12 text-green-500/30" />
-              <p className="mb-2 text-sm">Your notes are end-to-end encrypted</p>
-              <p className="mb-4 text-xs text-gray-600">Select a note or create a new one</p>
+              <p className="mb-4 text-sm">Select a note or create a new one</p>
               <button
                 onClick={handleCreateNote}
                 className="rounded-md bg-yellow-500 px-4 py-2 text-sm text-black hover:bg-yellow-600 transition-colors"
@@ -528,14 +456,6 @@ export function NotesApp() {
       {avatarButton}
 
       <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
-      <SecurityInfoModal isOpen={securityModalOpen} onClose={() => setSecurityModalOpen(false)} />
-      <SecurityDebugPanel
-        isOpen={debugPanelOpen}
-        onClose={() => setDebugPanelOpen(false)}
-        encryptedPayload={currentEncryptedPayload}
-        isEncrypted={!!currentEncryptedPayload}
-        plaintextLength={selectedNote ? selectedNote.title.length + selectedNote.content.length : undefined}
-      />
     </div>
   )
 }
@@ -565,20 +485,15 @@ function NotesList({
       {notes.map((note) => (
         <li key={note.id} className="border-b border-gray-800">
           <button
-            className={`w-full px-4 py-3 text-left transition-colors ${
+            className={`w-full p-4 text-left transition-colors ${
               selectedId === note.id ? "bg-zinc-800" : "hover:bg-zinc-900"
             }`}
             onClick={() => onSelect(note)}
           >
-            <h3 className="mb-1 font-medium text-white truncate">{note.title}</h3>
-            <div className="flex text-xs text-gray-400 gap-1">
-              <span>{formatDate(note.date)}</span>
-              <span>-</span>
-              <span className="truncate">
-                {note.content.substring(0, 32)}
-                {note.content.length > 32 ? "..." : ""}
-              </span>
-            </div>
+            <h3 className="font-medium text-white truncate">{note.title}</h3>
+            <p className="mt-1 text-sm text-gray-400 truncate">
+              {formatDate(note.date)} — {note.content.slice(0, 50) || "No content"}
+            </p>
           </button>
         </li>
       ))}
@@ -588,25 +503,13 @@ function NotesList({
 
 function NotesSkeleton() {
   return (
-    <ul>
-      {[1, 2, 3, 4].map((i) => (
-        <li key={i} className="border-b border-gray-800 px-4 py-3">
-          <div
-            className="mb-2 h-4 w-3/4 rounded"
-            style={{
-              background: "rgba(255,255,255,0.07)",
-              animation: "pulse 1.5s ease-in-out infinite",
-            }}
-          />
-          <div
-            className="h-3 w-1/2 rounded"
-            style={{
-              background: "rgba(255,255,255,0.04)",
-              animation: "pulse 1.5s ease-in-out infinite",
-            }}
-          />
-        </li>
+    <div className="p-4 space-y-4">
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="animate-pulse">
+          <div className="h-4 w-3/4 rounded bg-zinc-800" />
+          <div className="mt-2 h-3 w-1/2 rounded bg-zinc-800" />
+        </div>
       ))}
-    </ul>
+    </div>
   )
 }
