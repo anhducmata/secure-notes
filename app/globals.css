@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --accent-color: 234, 179, 8;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background-color: black;
+  color: white;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Enable user selection in the editor */
+.note-editor-content {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* iOS momentum scrolling */
+.momentum-scroll {
+  -webkit-overflow-scrolling: touch;
+  overflow-y: auto;
+}
+
+/* Simple transitions */
+.slide-in {
+  animation: slideIn 0.2s ease-out forwards;
+}
+
+.slide-out {
+  animation: slideOut 0.2s ease-out forwards;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideOut {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Focus styles */
+.focus-ring:focus {
+  outline: 2px solid rgb(var(--accent-color));
+  outline-offset: 2px;
+}
