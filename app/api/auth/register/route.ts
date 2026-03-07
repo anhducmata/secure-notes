@@ -55,13 +55,13 @@ export async function POST(request: Request) {
     await redis.set(`verify:${verificationToken}`, email.toLowerCase(), { ex: 86400 }) // 24h expiry
 
     // Send verification email - use custom domain if set, otherwise fall back to VERCEL_URL
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ||
       (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
     const verifyUrl = `${baseUrl}/api/auth/verify?token=${verificationToken}`
 
     try {
       await resend.emails.send({
-        from: "Notes App <onboarding@resend.dev>",
+        from: "Notes App <onboarding@freenotes.space>",
         to: email,
         subject: "Verify your email address",
         html: `
