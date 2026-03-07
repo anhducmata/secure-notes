@@ -71,8 +71,8 @@ export async function POST(request: Request) {
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
           </head>
-          <body style="margin: 0; padding: 0; background-color: #000000; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;">
-            <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #000000; padding: 40px 20px;">
+          <body style="margin: 0; padding: 0;  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="padding: 40px 20px;">
               <tr>
                 <td align="center">
                   <table width="100%" max-width="480" cellpadding="0" cellspacing="0" style="background: linear-gradient(145deg, rgba(40,40,40,0.9), rgba(20,20,20,0.95)); border-radius: 20px; border: 1px solid rgba(255,255,255,0.1); padding: 40px;">
