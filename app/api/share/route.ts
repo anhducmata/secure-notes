@@ -6,11 +6,29 @@ import { nanoid } from "nanoid"
 // TTL for share links: 24 hours
 const SHARE_LINK_TTL = 60 * 60 * 24 // 24 hours in seconds
 
+interface EncryptedSharePayload {
+  ciphertext: string
+  iv: string
+}
+
 interface ShareLinkData {
-  noteTitle: string
-  noteContent: string
+  encryptedData: EncryptedSharePayload
   createdAt: string
   creatorEmail: string
+}
+
+/**
+ * Validates that the share payload contains the required encrypted fields.
+ */
+function isValidEncryptedSharePayload(payload: unknown): payload is EncryptedSharePayload {
+  if (!payload || typeof payload !== "object") return false
+  const p = payload as Record<string, unknown>
+  return (
+    typeof p.ciphertext === "string" &&
+    typeof p.iv === "string" &&
+    p.ciphertext.length > 0 &&
+    p.iv.length > 0
+  )
 }
 
 /**
@@ -31,8 +49,10 @@ async function getAuthenticatedUserEmail(): Promise<string | null> {
 
 /**
  * POST /api/share
- * Creates a one-time share link for a note
- * The note content is passed decrypted from the client (since only the client can decrypt)
+ * Creates a one-time share link for a note.
+ * The caller must encrypt the note content client-side and send only the
+ * encrypted payload. The decryption key must be embedded in the share URL
+ * fragment by the caller so it never reaches this server.
  */
 export async function POST(request: Request) {
   try {
@@ -46,11 +66,11 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { noteTitle, noteContent } = body
+    const { encryptedData } = body
 
-    if (!noteTitle || typeof noteContent !== "string") {
+    if (!isValidEncryptedSharePayload(encryptedData)) {
       return NextResponse.json(
-        { error: "Note title and content are required" },
+        { error: "Invalid payload: note content must be encrypted before sharing" },
         { status: 400 }
       )
     }
@@ -58,10 +78,9 @@ export async function POST(request: Request) {
     // Generate a unique share ID
     const shareId = nanoid(21)
     
-    // Store the share link data in Redis with TTL
+    // Store only the encrypted payload – the server never sees plaintext
     const shareData: ShareLinkData = {
-      noteTitle,
-      noteContent,
+      encryptedData,
       createdAt: new Date().toISOString(),
       creatorEmail: userEmail,
     }

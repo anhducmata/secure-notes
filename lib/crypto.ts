@@ -247,3 +247,79 @@ export async function initializeEncryptionKey(
     salt: arrayBufferToBase64(salt),
   }
 }
+
+// ─── Share Link Encryption ────────────────────────────────────────────────────
+
+/**
+ * Generates a random AES-GCM key for one-time share link encryption.
+ * The key is exported as base64 to be embedded in the share URL fragment
+ * so it is never transmitted to or stored by the server.
+ */
+export async function generateShareKey(): Promise<{ key: CryptoKey; keyBase64: string }> {
+  const key = await crypto.subtle.generateKey(
+    { name: "AES-GCM", length: KEY_LENGTH },
+    true, // Exportable so we can embed it in the URL fragment
+    ["encrypt", "decrypt"]
+  )
+  const exported = await crypto.subtle.exportKey("raw", key)
+  return { key, keyBase64: arrayBufferToBase64(exported) }
+}
+
+/**
+ * Imports a share key from a base64 string extracted from the URL fragment.
+ */
+export async function importShareKey(keyBase64: string): Promise<CryptoKey> {
+  const keyData = base64ToArrayBuffer(keyBase64)
+  return crypto.subtle.importKey(
+    "raw",
+    keyData,
+    { name: "AES-GCM", length: KEY_LENGTH },
+    false,
+    ["decrypt"]
+  )
+}
+
+/**
+ * Encrypts plaintext for a share link using AES-GCM with the provided share key.
+ * @param plaintext - Content to encrypt
+ * @param key - Share key (from generateShareKey)
+ * @returns { ciphertext, iv } - both base64 encoded
+ */
+export async function encryptForShare(
+  plaintext: string,
+  key: CryptoKey
+): Promise<{ ciphertext: string; iv: string }> {
+  const iv = generateRandomBytes(IV_LENGTH)
+  const plaintextBuffer = new TextEncoder().encode(plaintext)
+  const ciphertextBuffer = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    plaintextBuffer
+  )
+  return {
+    ciphertext: arrayBufferToBase64(ciphertextBuffer),
+    iv: arrayBufferToBase64(iv),
+  }
+}
+
+/**
+ * Decrypts share link content using AES-GCM.
+ * @param ciphertext - Base64 encoded ciphertext
+ * @param iv - Base64 encoded IV
+ * @param key - Share key (from importShareKey)
+ * @returns Decrypted plaintext string
+ */
+export async function decryptFromShare(
+  ciphertext: string,
+  iv: string,
+  key: CryptoKey
+): Promise<string> {
+  const ciphertextBuffer = base64ToArrayBuffer(ciphertext)
+  const ivBuffer = base64ToArrayBuffer(iv)
+  const plaintextBuffer = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: ivBuffer },
+    key,
+    ciphertextBuffer
+  )
+  return new TextDecoder().decode(plaintextBuffer)
+}

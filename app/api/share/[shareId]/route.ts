@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server"
 import { redis, SHARE_LINK_KEY } from "@/lib/redis"
 
+interface EncryptedSharePayload {
+  ciphertext: string
+  iv: string
+}
+
 interface ShareLinkData {
-  noteTitle: string
-  noteContent: string
+  encryptedData: EncryptedSharePayload
   createdAt: string
   creatorEmail: string
 }
 
 /**
  * GET /api/share/[shareId]
- * Retrieves and consumes a one-time share link
- * After successful retrieval, the link is deleted (one-time use)
+ * Retrieves and consumes a one-time share link.
+ * After successful retrieval, the link is deleted (one-time use).
+ * Returns only the encrypted payload; decryption happens client-side
+ * using the key embedded in the share URL fragment.
  */
 export async function GET(
   request: Request,
@@ -50,12 +56,11 @@ export async function GET(
     // Delete the link immediately after reading (one-time use)
     await redis.del(key)
 
-    // Return the note data (without creator email for privacy)
+    // Return only the encrypted payload – the server never exposes plaintext
     return NextResponse.json({
       success: true,
       note: {
-        title: shareData.noteTitle,
-        content: shareData.noteContent,
+        encryptedData: shareData.encryptedData,
         sharedAt: shareData.createdAt,
       }
     })

@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { X, Copy, Check, Loader2, Link2 } from "lucide-react"
+import { generateShareKey, encryptForShare } from "@/lib/crypto"
 
 interface ShareModalProps {
   isOpen: boolean
@@ -21,11 +22,19 @@ export function ShareModal({ isOpen, onClose, noteTitle, noteContent }: ShareMod
     setError(null)
 
     try {
+      // Encrypt the note content client-side before sending to the server.
+      // The server only ever receives ciphertext; the decryption key lives
+      // exclusively in the share URL fragment and is never transmitted to or
+      // stored by the server.
+      const { key, keyBase64 } = await generateShareKey()
+      const plaintext = JSON.stringify({ title: noteTitle, content: noteContent })
+      const encryptedData = await encryptForShare(plaintext, key)
+
       const res = await fetch("/api/share", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ noteTitle, noteContent }),
+        body: JSON.stringify({ encryptedData }),
       })
 
       const data = await res.json()
@@ -34,7 +43,10 @@ export function ShareModal({ isOpen, onClose, noteTitle, noteContent }: ShareMod
         throw new Error(data.error || "Failed to create share link")
       }
 
-      setShareUrl(data.shareUrl)
+      // Append the decryption key to the URL fragment.
+      // URL fragments are never sent in HTTP requests, so the server
+      // cannot learn the key from network traffic.
+      setShareUrl(`${data.shareUrl}#key=${encodeURIComponent(keyBase64)}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create share link")
     } finally {
