@@ -186,6 +186,13 @@ export function PinLoginModal({ isOpen, onClose, onSuccess, onSwitchToPassword, 
                   background: "rgba(255,255,255,0.08)",
                   border: "1px solid rgba(255,255,255,0.1)",
                 }}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                data-form-type="other"
+                data-lpignore="true"
+                data-1p-ignore="true"
               />
             ))}
           </div>
@@ -254,7 +261,7 @@ export function storePinData(pin: string, encryptionKey: string, email: string):
     pinHash,
     salt,
     encryptedKey,
-    expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+    expiresAt: Date.now() + 12 * 60 * 60 * 1000, // 12 hours
   }
   
   localStorage.setItem("notes_pin_data", JSON.stringify(data))

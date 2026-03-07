@@ -111,6 +111,13 @@ export function SettingsModal({ isOpen, onClose, user, onPinSet, hasPin, onPinRe
             border: "1px solid rgba(255,255,255,0.1)",
           }}
           autoFocus={i === 0}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          data-form-type="other"
+          data-lpignore="true"
+          data-1p-ignore="true"
         />
       ))}
     </div>
@@ -142,7 +149,7 @@ export function SettingsModal({ isOpen, onClose, user, onPinSet, hasPin, onPinRe
           <div className="flex-1 text-left">
             <p className="text-sm font-medium text-white">Quick Access PIN</p>
             <p className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
-              {hasPin ? "PIN is set (24h access)" : "Set a 6-digit PIN for quick login"}
+              {hasPin ? "PIN is set (12h access)" : "Set a 6-digit PIN for quick login"}
             </p>
           </div>
           <ChevronRight className="h-4 w-4" style={{ color: "rgba(255,255,255,0.3)" }} />
@@ -233,7 +240,7 @@ export function SettingsModal({ isOpen, onClose, user, onPinSet, hasPin, onPinRe
             {pinStep === "create" ? renderPinInputs(pin) : renderPinInputs(confirmPin, true)}
 
             <p className="mt-4 text-center text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
-              This PIN allows quick access for 24 hours on this device.
+              This PIN allows quick access for 12 hours on this device.
             </p>
 
             {hasPin && (
@@ -340,6 +347,27 @@ export function SettingsModal({ isOpen, onClose, user, onPinSet, hasPin, onPinRe
           </div>
         </div>
 
+        {/* Auto-Lock */}
+        <div
+          className="rounded-xl p-4"
+          style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)" }}
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+              style={{ background: "rgba(239,68,68,0.15)" }}
+            >
+              <Lock className="h-4 w-4 text-red-400" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-white">Auto-Lock</p>
+              <p className="mt-1 text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.5)" }}>
+                Your notes automatically lock after 1 minute of inactivity. If you have a PIN set, you can quickly unlock with it for up to 12 hours.
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* PIN Security */}
         <div
           className="rounded-xl p-4"
@@ -355,7 +383,7 @@ export function SettingsModal({ isOpen, onClose, user, onPinSet, hasPin, onPinRe
             <div>
               <p className="text-sm font-medium text-white">Quick Access PIN</p>
               <p className="mt-1 text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.5)" }}>
-                The optional PIN provides convenient access for 24 hours. It&apos;s stored locally and automatically expires for your security.
+                The optional PIN provides convenient access for 12 hours. It&apos;s stored locally and automatically expires for your security.
               </p>
             </div>
           </div>

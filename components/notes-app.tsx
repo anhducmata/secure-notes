@@ -69,6 +69,58 @@ export function NotesApp() {
   // Encryption key derived from user's password (set during login)
   const encryptionPassword = user?.encryptionKey || ""
 
+  // Inactivity timeout - 1 minute
+  const INACTIVITY_TIMEOUT = 60 * 1000 // 1 minute in ms
+
+  // Inactivity auto-lock
+  useEffect(() => {
+    if (!user?.encryptionKey) return
+
+    let timeoutId: NodeJS.Timeout
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId)
+      timeoutId = setTimeout(() => {
+        // Lock the app - clear encryption key but keep user info
+        const pinData = getPinData()
+        if (pinData && pinData.email === user.email) {
+          // Has PIN - show PIN login
+          setUser({ ...user, encryptionKey: undefined })
+          setPinLoginOpen(true)
+        } else {
+          // No PIN - full logout
+          setUser({ ...user, encryptionKey: undefined })
+        }
+      }, INACTIVITY_TIMEOUT)
+    }
+
+    // Events that reset the timer
+    const events = ["mousedown", "mousemove", "keydown", "scroll", "touchstart", "click"]
+    
+    events.forEach(event => {
+      document.addEventListener(event, resetTimer, { passive: true })
+    })
+
+    // Also reset on visibility change (tab focus)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        resetTimer()
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+
+    // Start the timer
+    resetTimer()
+
+    return () => {
+      clearTimeout(timeoutId)
+      events.forEach(event => {
+        document.removeEventListener(event, resetTimer)
+      })
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
+    }
+  }, [user])
+
   // Check for existing session and PIN on mount
   useEffect(() => {
     const checkSession = async () => {
