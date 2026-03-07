@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { redis } from "@/lib/redis"
+import { decryptFromSession } from "@/app/api/auth/login/route"
 
 export async function GET() {
   try {
@@ -11,16 +12,29 @@ export async function GET() {
       return NextResponse.json({ user: null })
     }
 
-    const sessionDataStr = await redis.get(`session:${sessionToken}`)
-    if (!sessionDataStr) {
+    const rawSessionData = await redis.get(`session:${sessionToken}`)
+    if (!rawSessionData) {
       return NextResponse.json({ user: null })
     }
 
-    const sessionData = JSON.parse(sessionDataStr as string)
+    // Upstash may return already parsed object or string
+    const sessionData = typeof rawSessionData === "string" ? JSON.parse(rawSessionData) : rawSessionData
+    
+    // Decrypt the encryption key if it exists
+    let encryptionKey: string | undefined
+    if (sessionData.encryptedKey) {
+      try {
+        encryptionKey = decryptFromSession(sessionData.encryptedKey)
+      } catch {
+        // Key decryption failed, user will need to re-login
+      }
+    }
+    
     return NextResponse.json({
       user: {
         email: sessionData.email,
         name: sessionData.name,
+        encryptionKey, // Return decrypted key for client-side note decryption
       },
     })
   } catch (error) {

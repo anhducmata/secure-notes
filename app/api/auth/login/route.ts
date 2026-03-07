@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs"
 import crypto from "crypto"
 
 const BCRYPT_SALT_ROUNDS = 12
+const ENCRYPTION_SECRET = process.env.KV_REST_API_TOKEN || "fallback-secret-key"
 
 function generateSessionToken(): string {
   return crypto.randomBytes(32).toString("hex")
@@ -12,6 +13,27 @@ function generateSessionToken(): string {
 // Legacy SHA-256 hash for migration
 function legacyHashPassword(password: string): string {
   return crypto.createHash("sha256").update(password).digest("hex")
+}
+
+// Encrypt the user's password (encryption key) using server secret
+function encryptForSession(plaintext: string): string {
+  const iv = crypto.randomBytes(16)
+  const key = crypto.createHash("sha256").update(ENCRYPTION_SECRET).digest()
+  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv)
+  let encrypted = cipher.update(plaintext, "utf8", "base64")
+  encrypted += cipher.final("base64")
+  return iv.toString("base64") + ":" + encrypted
+}
+
+// Decrypt the stored encryption key
+export function decryptFromSession(encrypted: string): string {
+  const [ivBase64, ciphertext] = encrypted.split(":")
+  const iv = Buffer.from(ivBase64, "base64")
+  const key = crypto.createHash("sha256").update(ENCRYPTION_SECRET).digest()
+  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv)
+  let decrypted = decipher.update(ciphertext, "base64", "utf8")
+  decrypted += decipher.final("utf8")
+  return decrypted
 }
 
 export async function POST(request: Request) {
@@ -53,7 +75,6 @@ export async function POST(request: Request) {
         const newHash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS)
         userData.password = newHash
         await redis.hset("users", { [email.toLowerCase()]: JSON.stringify(userData) })
-        console.log("[v0] Migrated user password to bcrypt:", email.toLowerCase())
       }
     }
     
@@ -74,9 +95,14 @@ export async function POST(request: Request) {
 
     // Create session token
     const sessionToken = generateSessionToken()
+    
+    // Encrypt the password for session storage (used as encryption key)
+    const encryptedKey = encryptForSession(password)
+    
     const sessionData = {
       email: userData.email,
       name: userData.name,
+      encryptedKey, // Store encrypted version of password for decryption across tabs
       createdAt: Date.now(),
     }
 

@@ -70,9 +70,11 @@ export function NotesApp() {
       try {
         const res = await fetch("/api/auth/session", { credentials: "include" })
         const data = await res.json()
-        if (data.user) {
-          // User has session but we need the encryption key
-          // Show auth modal to get password for decryption
+        if (data.user && data.user.encryptionKey) {
+          // User has valid session with encryption key - fully authenticated
+          setUser(data.user)
+        } else if (data.user) {
+          // User has session but no encryption key - needs to re-login
           setUser({ ...data.user, encryptionKey: undefined })
         }
       } catch (e) {

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { redis } from "@/lib/redis"
-import { uploadNote, getNote, deleteNote, listUserNotes } from "@/lib/s3"
+import { uploadNote, deleteNote } from "@/lib/s3"
+
+// Redis key for user's notes cache
+const NOTES_CACHE_KEY = (userId: string) => `notes:${userId}`
 
 /**
  * Note API - Encrypted Data Only (S3 Storage)
@@ -54,25 +57,19 @@ async function getAuthenticatedUserId(): Promise<string | null> {
   const cookieStore = await cookies()
   const sessionToken = cookieStore.get("session")?.value
   
-  console.log("[v0] Session token:", sessionToken ? sessionToken.substring(0, 8) + "..." : "none")
-  
   if (!sessionToken) return null
   
   const rawSessionData = await redis.get(`session:${sessionToken}`)
-  console.log("[v0] Raw session data type:", typeof rawSessionData)
-  
   if (!rawSessionData) return null
   
   // Upstash may return already parsed object or string
   const sessionData = typeof rawSessionData === "string" ? JSON.parse(rawSessionData) : rawSessionData
-  console.log("[v0] Session user email:", sessionData.email)
-  
   return sessionData.email
 }
 
 /**
  * GET /api/notes
- * Fetches encrypted notes from S3.
+ * Fetches encrypted notes from Redis cache (fast).
  * Requires authentication.
  */
 export async function GET() {
@@ -83,26 +80,24 @@ export async function GET() {
       return NextResponse.json({ notes: [], authenticated: false })
     }
 
-    // List all note IDs for the user
-    const noteIds = await listUserNotes(userId)
+    // Fetch from Redis cache (fast!)
+    const cacheKey = NOTES_CACHE_KEY(userId)
+    const rawNotes = await redis.get(cacheKey)
     
-    if (noteIds.length === 0) {
-      return NextResponse.json({ notes: [], source: "s3", encrypted: true })
+    if (!rawNotes) {
+      return NextResponse.json({ notes: [], source: "cache", encrypted: true })
     }
     
-    // Fetch all notes in parallel
-    const notePromises = noteIds.map(async (noteId) => {
-      const noteData = await getNote(userId, noteId)
-      return noteData as EncryptedNote | null
-    })
+    // Upstash may return already parsed object or string
+    const notes = typeof rawNotes === "string" ? JSON.parse(rawNotes) : rawNotes
     
-    const notes = (await Promise.all(notePromises))
-      .filter((n): n is EncryptedNote => n !== null)
+    // Sort by date descending
+    const sortedNotes = (notes as EncryptedNote[])
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
-    return NextResponse.json({ notes, source: "s3", encrypted: true })
+    return NextResponse.json({ notes: sortedNotes, source: "cache", encrypted: true })
   } catch (err) {
-    console.error("[v0] S3 fetch error:", err)
+    console.error("[v0] Cache fetch error:", err)
     return NextResponse.json({ notes: [], source: "fallback", encrypted: true })
   }
 }
@@ -144,12 +139,21 @@ export async function POST(request: Request) {
       folder: body.folder || "notes",
     }
 
-    // Upload to S3
-    await uploadNote(userId, note.id, note)
+    // Update Redis cache (primary storage for fast reads)
+    const cacheKey = NOTES_CACHE_KEY(userId)
+    const rawNotes = await redis.get(cacheKey)
+    const notes = rawNotes 
+      ? (typeof rawNotes === "string" ? JSON.parse(rawNotes) : rawNotes) as EncryptedNote[]
+      : []
+    notes.unshift(note)
+    await redis.set(cacheKey, JSON.stringify(notes))
+    
+    // Also upload to S3 (backup storage)
+    uploadNote(userId, note.id, note).catch(err => console.error("[v0] S3 backup error:", err))
 
     return NextResponse.json({ success: true, note, encrypted: true })
   } catch (err) {
-    console.error("[v0] S3 create error:", err)
+    console.error("[v0] Create error:", err)
     return NextResponse.json({ error: "Failed to create note" }, { status: 500 })
   }
 }
@@ -191,12 +195,27 @@ export async function PUT(request: Request) {
       folder: body.folder || "notes",
     }
 
-    // Upload to S3 (overwrites existing)
-    await uploadNote(userId, updatedNote.id, updatedNote)
+    // Update Redis cache
+    const cacheKey = NOTES_CACHE_KEY(userId)
+    const rawNotes = await redis.get(cacheKey)
+    let notes = rawNotes 
+      ? (typeof rawNotes === "string" ? JSON.parse(rawNotes) : rawNotes) as EncryptedNote[]
+      : []
+    
+    const index = notes.findIndex(n => n.id === updatedNote.id)
+    if (index >= 0) {
+      notes[index] = updatedNote
+    } else {
+      notes.unshift(updatedNote)
+    }
+    await redis.set(cacheKey, JSON.stringify(notes))
+    
+    // Also upload to S3 (backup)
+    uploadNote(userId, updatedNote.id, updatedNote).catch(err => console.error("[v0] S3 backup error:", err))
 
     return NextResponse.json({ success: true, note: updatedNote, encrypted: true })
   } catch (err) {
-    console.error("[v0] S3 update error:", err)
+    console.error("[v0] Update error:", err)
     return NextResponse.json({ error: "Failed to save note" }, { status: 500 })
   }
 }
@@ -224,12 +243,21 @@ export async function DELETE(request: Request) {
       )
     }
 
-    // Delete from S3
-    await deleteNote(userId, noteId)
+    // Update Redis cache
+    const cacheKey = NOTES_CACHE_KEY(userId)
+    const rawNotes = await redis.get(cacheKey)
+    if (rawNotes) {
+      let notes = (typeof rawNotes === "string" ? JSON.parse(rawNotes) : rawNotes) as EncryptedNote[]
+      notes = notes.filter(n => n.id !== noteId)
+      await redis.set(cacheKey, JSON.stringify(notes))
+    }
+    
+    // Also delete from S3 (backup)
+    deleteNote(userId, noteId).catch(err => console.error("[v0] S3 delete error:", err))
 
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error("[v0] S3 delete error:", err)
+    console.error("[v0] Delete error:", err)
     return NextResponse.json({ error: "Failed to delete note" }, { status: 500 })
   }
 }
