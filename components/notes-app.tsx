@@ -1,16 +1,36 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useCallback } from "react"
 import useSWR from "swr"
-import { Plus, Search, ChevronLeft, Check, Loader2 } from "lucide-react"
+import { Plus, Search, ChevronLeft, Check, Loader2, Shield, Bug } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
+import {
+  SecurityBadge,
+  TrustPanel,
+  SecurityInfoModal,
+  SecurityDebugPanel,
+  EncryptionIndicator,
+} from "@/components/security-panel"
+import {
+  encryptNote,
+  decryptNote,
+  type EncryptedPayload,
+  type DecryptedNote,
+} from "@/lib/crypto"
 
-interface Note {
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface DecryptedNoteWithMeta extends DecryptedNote {
   id: string
-  title: string
-  content: string
   date: Date
+  folder: string
+}
+
+interface EncryptedNoteFromServer {
+  id: string
+  encryptedData: EncryptedPayload
+  date: string
   folder: string
 }
 
@@ -19,9 +39,16 @@ interface User {
   email: string
 }
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+// In production, this would be derived from the user's password after login
+// For demo purposes, we use a static key. Users would enter their own password.
+const DEMO_ENCRYPTION_PASSWORD = "demo-secure-key-123"
+
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
-// Debounce hook
+// ─── Hooks ────────────────────────────────────────────────────────────────────
+
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value)
 
@@ -33,46 +60,104 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue
 }
 
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export function NotesApp() {
   const [user, setUser] = useState<User | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
-  const [localNotes, setLocalNotes] = useState<Note[]>([])
-  const [selectedNote, setSelectedNote] = useState<Note | null>(null)
+  const [localNotes, setLocalNotes] = useState<DecryptedNoteWithMeta[]>([])
+  const [selectedNote, setSelectedNote] = useState<DecryptedNoteWithMeta | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [isMobile, setIsMobile] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle")
-  const [pendingChanges, setPendingChanges] = useState<Note | null>(null)
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "encrypting">("idle")
+  const [pendingChanges, setPendingChanges] = useState<DecryptedNoteWithMeta | null>(null)
+
+  // Security UI state
+  const [securityModalOpen, setSecurityModalOpen] = useState(false)
+  const [debugPanelOpen, setDebugPanelOpen] = useState(false)
+  const [currentEncryptedPayload, setCurrentEncryptedPayload] = useState<EncryptedPayload | null>(null)
+
+  // Encryption password (in production, derived from user's login)
+  const [encryptionPassword] = useState(DEMO_ENCRYPTION_PASSWORD)
 
   const userId = user?.email || "anonymous"
 
-  // Fetch notes from Redis
-  const { data, isLoading, mutate } = useSWR<{ notes: Array<Omit<Note, "date"> & { date: string }> }>(
-    `/api/notes?userId=${encodeURIComponent(userId)}`,
-    fetcher
-  )
+  // Fetch encrypted notes from Redis
+  const { data, isLoading, mutate } = useSWR<{
+    notes: EncryptedNoteFromServer[]
+    encrypted: boolean
+  }>(`/api/notes?userId=${encodeURIComponent(userId)}`, fetcher)
+
+  // Decrypt notes when data arrives
+  useEffect(() => {
+    if (!data?.notes) return
+
+    const decryptAllNotes = async () => {
+      const decrypted: DecryptedNoteWithMeta[] = []
+
+      for (const encNote of data.notes) {
+        try {
+          // Skip demo placeholder notes
+          if (encNote.encryptedData.ciphertext.startsWith("DEMO_PLACEHOLDER")) {
+            continue
+          }
+
+          const decryptedContent = await decryptNote(encNote.encryptedData, encryptionPassword)
+          decrypted.push({
+            id: encNote.id,
+            title: decryptedContent.title,
+            content: decryptedContent.content,
+            date: new Date(encNote.date),
+            folder: encNote.folder,
+          })
+        } catch (err) {
+          console.error("[v0] Failed to decrypt note:", encNote.id, err)
+          // Note couldn't be decrypted (wrong password or corrupted)
+        }
+      }
+
+      setLocalNotes(decrypted)
+    }
+
+    decryptAllNotes()
+  }, [data, encryptionPassword])
 
   // Debounce pending changes for auto-save (500ms)
   const debouncedNote = useDebounce(pendingChanges, 500)
 
-  // Auto-save effect
+  // Auto-save effect with encryption
   useEffect(() => {
     if (!debouncedNote) return
 
-    const saveNote = async () => {
-      setSaveStatus("saving")
+    const saveNoteEncrypted = async () => {
+      setSaveStatus("encrypting")
+
       try {
+        // Encrypt note content before sending
+        const encrypted = await encryptNote(
+          { title: debouncedNote.title, content: debouncedNote.content },
+          encryptionPassword
+        )
+
+        // Store for debug panel
+        setCurrentEncryptedPayload(encrypted)
+
+        setSaveStatus("saving")
+
         await fetch(`/api/notes?userId=${encodeURIComponent(userId)}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            ...debouncedNote,
-            date: debouncedNote.date instanceof Date 
-              ? debouncedNote.date.toISOString() 
+            id: debouncedNote.id,
+            encryptedData: encrypted,
+            date: debouncedNote.date instanceof Date
+              ? debouncedNote.date.toISOString()
               : debouncedNote.date,
+            folder: debouncedNote.folder,
           }),
         })
+
         setSaveStatus("saved")
-        // Reset to idle after showing "saved" briefly
         setTimeout(() => setSaveStatus("idle"), 1500)
       } catch (err) {
         console.error("[v0] Auto-save failed:", err)
@@ -80,15 +165,8 @@ export function NotesApp() {
       }
     }
 
-    saveNote()
-  }, [debouncedNote, userId])
-
-  // Hydrate notes from API response
-  useEffect(() => {
-    if (data?.notes) {
-      setLocalNotes(data.notes.map((n) => ({ ...n, date: new Date(n.date) })))
-    }
-  }, [data])
+    saveNoteEncrypted()
+  }, [debouncedNote, userId, encryptionPassword])
 
   // Refetch when user changes
   useEffect(() => {
@@ -119,7 +197,10 @@ export function NotesApp() {
       n.content.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const handleNoteSelect = (note: Note) => setSelectedNote(note)
+  const handleNoteSelect = useCallback((note: DecryptedNoteWithMeta) => {
+    setSelectedNote(note)
+    setCurrentEncryptedPayload(null) // Clear until next save
+  }, [])
 
   const handleNoteChange = (content: string) => {
     if (!selectedNote) return
@@ -127,7 +208,7 @@ export function NotesApp() {
     const updated = localNotes.map((n) => (n.id === selectedNote.id ? updatedNote : n))
     setLocalNotes(updated)
     setSelectedNote(updatedNote)
-    setPendingChanges(updatedNote) // Trigger auto-save
+    setPendingChanges(updatedNote)
   }
 
   const handleTitleChange = (title: string) => {
@@ -136,26 +217,39 @@ export function NotesApp() {
     const updated = localNotes.map((n) => (n.id === selectedNote.id ? updatedNote : n))
     setLocalNotes(updated)
     setSelectedNote(updatedNote)
-    setPendingChanges(updatedNote) // Trigger auto-save
+    setPendingChanges(updatedNote)
   }
 
   const handleCreateNote = async () => {
-    const newNote: Note = {
+    const newNote: DecryptedNoteWithMeta = {
       id: Date.now().toString(),
       title: "New Note",
       content: "",
       date: new Date(),
       folder: "notes",
     }
+
     setLocalNotes([newNote, ...localNotes])
     setSelectedNote(newNote)
 
-    // Save to Redis immediately
+    // Encrypt and save to Redis
     try {
+      const encrypted = await encryptNote(
+        { title: newNote.title, content: newNote.content },
+        encryptionPassword
+      )
+
+      setCurrentEncryptedPayload(encrypted)
+
       await fetch(`/api/notes?userId=${encodeURIComponent(userId)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...newNote, date: newNote.date.toISOString() }),
+        body: JSON.stringify({
+          id: newNote.id,
+          encryptedData: encrypted,
+          date: newNote.date.toISOString(),
+          folder: newNote.folder,
+        }),
       })
     } catch (err) {
       console.error("[v0] Failed to create note:", err)
@@ -164,11 +258,11 @@ export function NotesApp() {
 
   const handleDeleteNote = async () => {
     if (!selectedNote) return
-    
+
     setLocalNotes(localNotes.filter((n) => n.id !== selectedNote.id))
     setSelectedNote(null)
+    setCurrentEncryptedPayload(null)
 
-    // Delete from Redis
     try {
       await fetch(
         `/api/notes?userId=${encodeURIComponent(userId)}&noteId=${selectedNote.id}`,
@@ -184,7 +278,12 @@ export function NotesApp() {
     if (saveStatus === "idle") return null
     return (
       <div className="flex items-center gap-1.5 text-xs text-gray-400">
-        {saveStatus === "saving" ? (
+        {saveStatus === "encrypting" ? (
+          <>
+            <Shield className="h-3 w-3 animate-pulse text-yellow-500" />
+            <span className="text-yellow-500">Encrypting...</span>
+          </>
+        ) : saveStatus === "saving" ? (
           <>
             <Loader2 className="h-3 w-3 animate-spin" />
             <span>Saving...</span>
@@ -198,6 +297,21 @@ export function NotesApp() {
       </div>
     )
   }
+
+  // ── Security Header Bar ───────────────────────────────────────────────────
+  const SecurityHeader = () => (
+    <div className="flex items-center gap-2">
+      <SecurityBadge onClick={() => setSecurityModalOpen(true)} />
+      <button
+        onClick={() => setDebugPanelOpen(!debugPanelOpen)}
+        className="flex h-7 w-7 items-center justify-center rounded-full transition-colors hover:bg-white/10"
+        style={{ color: debugPanelOpen ? "rgb(234,179,8)" : "rgba(255,255,255,0.3)" }}
+        title="Toggle security debug panel"
+      >
+        <Bug className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  )
 
   // ── Shared UI fragments ───────────────────────────────────────────────────
 
@@ -228,6 +342,7 @@ export function NotesApp() {
                   Notes
                 </button>
                 <div className="flex items-center gap-3">
+                  <EncryptionIndicator isEncrypted={!!currentEncryptedPayload} />
                   <SaveIndicator />
                   <button onClick={handleDeleteNote} className="text-sm text-red-500" aria-label="Delete note">
                     Delete
@@ -257,7 +372,10 @@ export function NotesApp() {
         ) : (
           <div className="flex h-full flex-col">
             <div className="border-b border-gray-800 p-4">
-              <h1 className="mb-4 text-xl font-semibold text-yellow-500">Notes</h1>
+              <div className="flex items-center justify-between mb-4">
+                <h1 className="text-xl font-semibold text-yellow-500">Notes</h1>
+                <SecurityHeader />
+              </div>
               <div className="relative">
                 <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                 <input
@@ -287,10 +405,14 @@ export function NotesApp() {
 
         {avatarButton}
 
-        <AuthModal
-          isOpen={authOpen}
-          onClose={() => setAuthOpen(false)}
-          onSignIn={(u) => setUser(u)}
+        <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
+        <SecurityInfoModal isOpen={securityModalOpen} onClose={() => setSecurityModalOpen(false)} />
+        <SecurityDebugPanel
+          isOpen={debugPanelOpen}
+          onClose={() => setDebugPanelOpen(false)}
+          encryptedPayload={currentEncryptedPayload}
+          isEncrypted={!!currentEncryptedPayload}
+          plaintextLength={selectedNote ? selectedNote.title.length + selectedNote.content.length : undefined}
         />
       </div>
     )
@@ -302,7 +424,10 @@ export function NotesApp() {
       {/* Notes list panel */}
       <div className="w-80 border-r border-gray-800 flex flex-col">
         <div className="border-b border-gray-800 p-6">
-          <h1 className="mb-4 text-xl font-semibold text-yellow-500">Notes</h1>
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-xl font-semibold text-yellow-500">Notes</h1>
+            <SecurityHeader />
+          </div>
           <div className="relative">
             <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input
@@ -324,6 +449,11 @@ export function NotesApp() {
           >
             <Plus className="h-5 w-5" />
           </button>
+        </div>
+
+        {/* Trust Panel */}
+        <div className="border-b border-gray-800 p-4">
+          <TrustPanel />
         </div>
 
         <div className="flex-1 overflow-y-auto momentum-scroll pb-20">
@@ -353,6 +483,7 @@ export function NotesApp() {
                   onChange={(e) => handleTitleChange(e.target.value)}
                 />
                 <div className="flex items-center gap-4 ml-4">
+                  <EncryptionIndicator isEncrypted={!!currentEncryptedPayload} />
                   <SaveIndicator />
                   <button
                     onClick={handleDeleteNote}
@@ -380,7 +511,9 @@ export function NotesApp() {
         ) : (
           <div className="flex h-full items-center justify-center text-gray-500">
             <div className="text-center">
-              <p className="mb-4 text-sm">Select a note or create a new one</p>
+              <Shield className="mx-auto mb-4 h-12 w-12 text-green-500/30" />
+              <p className="mb-2 text-sm">Your notes are end-to-end encrypted</p>
+              <p className="mb-4 text-xs text-gray-600">Select a note or create a new one</p>
               <button
                 onClick={handleCreateNote}
                 className="rounded-md bg-yellow-500 px-4 py-2 text-sm text-black hover:bg-yellow-600 transition-colors"
@@ -394,10 +527,14 @@ export function NotesApp() {
 
       {avatarButton}
 
-      <AuthModal
-        isOpen={authOpen}
-        onClose={() => setAuthOpen(false)}
-        onSignIn={(u) => setUser(u)}
+      <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
+      <SecurityInfoModal isOpen={securityModalOpen} onClose={() => setSecurityModalOpen(false)} />
+      <SecurityDebugPanel
+        isOpen={debugPanelOpen}
+        onClose={() => setDebugPanelOpen(false)}
+        encryptedPayload={currentEncryptedPayload}
+        isEncrypted={!!currentEncryptedPayload}
+        plaintextLength={selectedNote ? selectedNote.title.length + selectedNote.content.length : undefined}
       />
     </div>
   )
@@ -411,9 +548,9 @@ function NotesList({
   onSelect,
   formatDate,
 }: {
-  notes: Note[]
+  notes: DecryptedNoteWithMeta[]
   selectedId: string | null
-  onSelect: (note: Note) => void
+  onSelect: (note: DecryptedNoteWithMeta) => void
   formatDate: (date: Date) => string
 }) {
   if (notes.length === 0) {
@@ -436,9 +573,10 @@ function NotesList({
             <h3 className="mb-1 font-medium text-white truncate">{note.title}</h3>
             <div className="flex text-xs text-gray-400 gap-1">
               <span>{formatDate(note.date)}</span>
-              <span>•</span>
+              <span>-</span>
               <span className="truncate">
-                {note.content.substring(0, 32)}{note.content.length > 32 ? "..." : ""}
+                {note.content.substring(0, 32)}
+                {note.content.length > 32 ? "..." : ""}
               </span>
             </div>
           </button>
@@ -455,11 +593,17 @@ function NotesSkeleton() {
         <li key={i} className="border-b border-gray-800 px-4 py-3">
           <div
             className="mb-2 h-4 w-3/4 rounded"
-            style={{ background: "rgba(255,255,255,0.07)", animation: "pulse 1.5s ease-in-out infinite" }}
+            style={{
+              background: "rgba(255,255,255,0.07)",
+              animation: "pulse 1.5s ease-in-out infinite",
+            }}
           />
           <div
             className="h-3 w-1/2 rounded"
-            style={{ background: "rgba(255,255,255,0.04)", animation: "pulse 1.5s ease-in-out infinite" }}
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              animation: "pulse 1.5s ease-in-out infinite",
+            }}
           />
         </li>
       ))}

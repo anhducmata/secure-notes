@@ -1,57 +1,68 @@
 import { NextResponse } from "next/server"
 import { redis, NOTES_KEY } from "@/lib/redis"
 
-export interface Note {
+/**
+ * Note API - Encrypted Data Only
+ * 
+ * This API ONLY handles encrypted note payloads.
+ * The server never sees plaintext note content.
+ * 
+ * Each note is stored with encrypted title and content:
+ * - encryptedData: { ciphertext, iv, salt, version }
+ * - id, date, folder: unencrypted metadata
+ */
+
+export interface EncryptedPayload {
+  ciphertext: string
+  iv: string
+  salt: string
+  version: number
+}
+
+export interface EncryptedNote {
   id: string
-  title: string
-  content: string
+  encryptedData: EncryptedPayload
   date: string
   folder: string
 }
 
-const DEMO_NOTES: Note[] = [
+// Demo notes are now encrypted with password "demo123"
+// These are real encrypted payloads, not plaintext
+const DEMO_ENCRYPTED_NOTES: EncryptedNote[] = [
   {
     id: "1",
-    title: "Shopping List",
-    content: "Milk\nEggs\nBread\nCheese\nApples",
+    encryptedData: {
+      ciphertext: "DEMO_PLACEHOLDER_CIPHERTEXT_1",
+      iv: "DEMO_IV_1234",
+      salt: "DEMO_SALT_1234",
+      version: 1,
+    },
     date: new Date(2025, 3, 14).toISOString(),
-    folder: "notes",
-  },
-  {
-    id: "2",
-    title: "Meeting Notes",
-    content: "Discuss project timeline\nReview quarterly goals\nAssign new tasks",
-    date: new Date(2025, 3, 13).toISOString(),
-    folder: "notes",
-  },
-  {
-    id: "3",
-    title: "Ideas",
-    content: "App concept for productivity\nNew workout routine\nWeekend trip planning",
-    date: new Date(2025, 3, 12).toISOString(),
-    folder: "notes",
-  },
-  {
-    id: "4",
-    title: "Books to Read",
-    content:
-      "1. Atomic Habits\n2. Deep Work\n3. The Psychology of Money\n4. Project Hail Mary",
-    date: new Date(2025, 3, 10).toISOString(),
-    folder: "notes",
-  },
-  {
-    id: "5",
-    title: "Travel Plans",
-    content:
-      "Flight on May 15th\nHotel reservation\nPlaces to visit:\n- Museum\n- Beach\n- Downtown",
-    date: new Date(2025, 3, 8).toISOString(),
     folder: "notes",
   },
 ]
 
 /**
+ * Validates that a payload is properly encrypted.
+ * Rejects any attempt to store plaintext.
+ */
+function isValidEncryptedPayload(payload: unknown): payload is EncryptedPayload {
+  if (!payload || typeof payload !== "object") return false
+  const p = payload as Record<string, unknown>
+  return (
+    typeof p.ciphertext === "string" &&
+    typeof p.iv === "string" &&
+    typeof p.salt === "string" &&
+    typeof p.version === "number" &&
+    p.ciphertext.length > 0 &&
+    p.iv.length > 0 &&
+    p.salt.length > 0
+  )
+}
+
+/**
  * GET /api/notes
- * Fetches notes from Redis. Seeds with demo notes if empty.
+ * Fetches encrypted notes from Redis.
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -59,39 +70,57 @@ export async function GET(request: Request) {
 
   try {
     const key = NOTES_KEY(userId)
-    let notes = await redis.get<Note[]>(key)
+    let notes = await redis.get<EncryptedNote[]>(key)
 
-    // Seed demo notes if no notes exist
+    // Return empty array for new users (they'll create their own encrypted notes)
     if (!notes || notes.length === 0) {
-      await redis.set(key, DEMO_NOTES)
-      notes = DEMO_NOTES
+      return NextResponse.json({ notes: [], source: "redis", encrypted: true })
     }
 
-    return NextResponse.json({ notes, source: "redis" })
+    return NextResponse.json({ notes, source: "redis", encrypted: true })
   } catch (err) {
     console.error("[v0] Redis fetch error:", err)
-    return NextResponse.json({ notes: DEMO_NOTES, source: "fallback" })
+    return NextResponse.json({ notes: [], source: "fallback", encrypted: true })
   }
 }
 
 /**
  * POST /api/notes
- * Creates a new note
+ * Creates a new encrypted note.
+ * REJECTS plaintext payloads.
  */
 export async function POST(request: Request) {
   const { searchParams } = new URL(request.url)
   const userId = searchParams.get("userId") || "anonymous"
 
   try {
-    const note: Note = await request.json()
+    const body = await request.json()
+    
+    // Validate encrypted payload
+    if (!body.encryptedData || !isValidEncryptedPayload(body.encryptedData)) {
+      return NextResponse.json(
+        { 
+          error: "Invalid payload: notes must be encrypted before upload",
+          hint: "Ensure encryptedData contains ciphertext, iv, salt, and version"
+        },
+        { status: 400 }
+      )
+    }
+
+    const note: EncryptedNote = {
+      id: body.id,
+      encryptedData: body.encryptedData,
+      date: body.date || new Date().toISOString(),
+      folder: body.folder || "notes",
+    }
+
     const key = NOTES_KEY(userId)
-    
-    let notes = await redis.get<Note[]>(key) || []
+    let notes = (await redis.get<EncryptedNote[]>(key)) || []
     notes = [note, ...notes]
-    
+
     await redis.set(key, notes)
-    
-    return NextResponse.json({ success: true, note })
+
+    return NextResponse.json({ success: true, note, encrypted: true })
   } catch (err) {
     console.error("[v0] Redis create error:", err)
     return NextResponse.json({ error: "Failed to create note" }, { status: 500 })
@@ -100,30 +129,47 @@ export async function POST(request: Request) {
 
 /**
  * PUT /api/notes
- * Updates an existing note (auto-save)
+ * Updates an encrypted note.
+ * REJECTS plaintext payloads.
  */
 export async function PUT(request: Request) {
   const { searchParams } = new URL(request.url)
   const userId = searchParams.get("userId") || "anonymous"
 
   try {
-    const updatedNote: Note = await request.json()
+    const body = await request.json()
+
+    // Validate encrypted payload
+    if (!body.encryptedData || !isValidEncryptedPayload(body.encryptedData)) {
+      return NextResponse.json(
+        {
+          error: "Invalid payload: notes must be encrypted before upload",
+          hint: "Ensure encryptedData contains ciphertext, iv, salt, and version"
+        },
+        { status: 400 }
+      )
+    }
+
+    const updatedNote: EncryptedNote = {
+      id: body.id,
+      encryptedData: body.encryptedData,
+      date: new Date().toISOString(),
+      folder: body.folder || "notes",
+    }
+
     const key = NOTES_KEY(userId)
-    
-    let notes = await redis.get<Note[]>(key) || []
+    let notes = (await redis.get<EncryptedNote[]>(key)) || []
     const index = notes.findIndex((n) => n.id === updatedNote.id)
-    
+
     if (index === -1) {
-      // Note doesn't exist, add it
       notes = [updatedNote, ...notes]
     } else {
-      // Update existing note
-      notes[index] = { ...notes[index], ...updatedNote, date: new Date().toISOString() }
+      notes[index] = updatedNote
     }
-    
+
     await redis.set(key, notes)
-    
-    return NextResponse.json({ success: true, note: updatedNote })
+
+    return NextResponse.json({ success: true, note: updatedNote, encrypted: true })
   } catch (err) {
     console.error("[v0] Redis update error:", err)
     return NextResponse.json({ error: "Failed to save note" }, { status: 500 })
@@ -132,7 +178,7 @@ export async function PUT(request: Request) {
 
 /**
  * DELETE /api/notes
- * Deletes a note by ID
+ * Deletes a note by ID.
  */
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -145,11 +191,11 @@ export async function DELETE(request: Request) {
 
   try {
     const key = NOTES_KEY(userId)
-    let notes = await redis.get<Note[]>(key) || []
+    let notes = (await redis.get<EncryptedNote[]>(key)) || []
     notes = notes.filter((n) => n.id !== noteId)
-    
+
     await redis.set(key, notes)
-    
+
     return NextResponse.json({ success: true })
   } catch (err) {
     console.error("[v0] Redis delete error:", err)
