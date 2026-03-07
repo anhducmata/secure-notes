@@ -96,6 +96,12 @@ export async function POST(request: Request) {
     // Create session token
     const sessionToken = generateSessionToken()
     
+    // Delete any existing session for this user (enforce single session)
+    const existingSessionId = await redis.get(`user_session:${email.toLowerCase()}`)
+    if (existingSessionId) {
+      await redis.del(`session:${existingSessionId}`)
+    }
+    
     // Encrypt the password for session storage (used as encryption key)
     const encryptedKey = encryptForSession(password)
     
@@ -108,6 +114,9 @@ export async function POST(request: Request) {
 
     // Store session (7 days expiry)
     await redis.set(`session:${sessionToken}`, JSON.stringify(sessionData), { ex: 604800 })
+    
+    // Track current session for this user (to delete on next login)
+    await redis.set(`user_session:${email.toLowerCase()}`, sessionToken, { ex: 604800 })
 
     // Create response with cookie
     const response = NextResponse.json({
