@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import useSWR from "swr"
-import { Plus, Search, ChevronLeft, Check, Loader2, Lock, Share2 } from "lucide-react"
+import { Plus, Search, ChevronLeft, Lock, Share2, Trash2 } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
 import { SettingsModal } from "@/components/settings-modal"
@@ -64,7 +64,7 @@ export function NotesApp() {
   const [selectedNote, setSelectedNote] = useState<DecryptedNoteWithMeta | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [isMobile, setIsMobile] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle")
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle") // Keep for auto-save logic
   const [pendingChanges, setPendingChanges] = useState<DecryptedNoteWithMeta | null>(null)
   const [shareModalOpen, setShareModalOpen] = useState(false)
 
@@ -383,26 +383,6 @@ export function NotesApp() {
     }
   }
 
-  // ── Save status indicator ─────────────────────────────────────────────────
-  const SaveIndicator = () => {
-    if (saveStatus === "idle") return null
-    return (
-      <div className="flex items-center gap-1.5 text-xs text-gray-400">
-        {saveStatus === "saving" ? (
-          <>
-            <Loader2 className="h-3 w-3 animate-spin" />
-            <span>Saving...</span>
-          </>
-        ) : (
-          <>
-            <Check className="h-3 w-3 text-green-500" />
-            <span className="text-green-500">Saved</span>
-          </>
-        )}
-      </div>
-    )
-  }
-
   // ── Shared UI fragments ───────────────────────────────────────────────────
 
   const avatarButton = (
@@ -477,17 +457,20 @@ export function NotesApp() {
                   <ChevronLeft className="mr-1 h-4 w-4" />
                   Notes
                 </button>
-                <div className="flex items-center gap-3">
-                  <SaveIndicator />
+                <div className="flex items-center gap-1">
                   <button
                     onClick={() => setShareModalOpen(true)}
-                    className="p-2 rounded-lg text-yellow-500 hover:bg-zinc-800 transition-colors"
+                    className="p-2 rounded-lg text-gray-400 hover:text-yellow-500 hover:bg-zinc-800 transition-colors"
                     aria-label="Share note"
                   >
                     <Share2 className="h-4 w-4" />
                   </button>
-                  <button onClick={handleDeleteNote} className="text-sm text-red-500" aria-label="Delete note">
-                    Delete
+                  <button 
+                    onClick={handleDeleteNote} 
+                    className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-zinc-800 transition-colors" 
+                    aria-label="Delete note"
+                  >
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
               </div>
@@ -621,21 +604,20 @@ export function NotesApp() {
                   value={selectedNote.title}
                   onChange={(e) => handleTitleChange(e.target.value)}
                 />
-                <div className="flex items-center gap-4 ml-4">
-                  <SaveIndicator />
+                <div className="flex items-center gap-1 ml-4">
                   <button
                     onClick={() => setShareModalOpen(true)}
-                    className="p-2 rounded-lg text-yellow-500 hover:bg-zinc-800 transition-colors"
+                    className="p-2 rounded-lg text-gray-400 hover:text-yellow-500 hover:bg-zinc-800 transition-colors"
                     aria-label="Share note"
                   >
                     <Share2 className="h-5 w-5" />
                   </button>
                   <button
                     onClick={handleDeleteNote}
-                    className="text-sm text-red-500 transition-opacity hover:opacity-70"
+                    className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-zinc-800 transition-colors"
                     aria-label="Delete note"
                   >
-                    Delete
+                    <Trash2 className="h-5 w-5" />
                   </button>
                 </div>
               </div>
