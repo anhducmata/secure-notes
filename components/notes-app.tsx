@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import useSWR from "swr"
-import { Plus, Search, ChevronLeft, Check, Loader2, Lock } from "lucide-react"
+import { Plus, Search, ChevronLeft, Check, Loader2, Lock, Share2 } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
 import { SettingsModal } from "@/components/settings-modal"
@@ -13,6 +13,7 @@ import {
   type EncryptedPayload,
   type DecryptedNote,
 } from "@/lib/crypto"
+import { ShareModal } from "@/components/share-modal"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ export function NotesApp() {
   const [isMobile, setIsMobile] = useState(false)
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle")
   const [pendingChanges, setPendingChanges] = useState<DecryptedNoteWithMeta | null>(null)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
 
   // Encryption key derived from user's password (set during login)
   const encryptionPassword = user?.encryptionKey || ""
@@ -477,6 +479,13 @@ export function NotesApp() {
                 </button>
                 <div className="flex items-center gap-3">
                   <SaveIndicator />
+                  <button
+                    onClick={() => setShareModalOpen(true)}
+                    className="p-2 rounded-lg text-yellow-500 hover:bg-zinc-800 transition-colors"
+                    aria-label="Share note"
+                  >
+                    <Share2 className="h-4 w-4" />
+                  </button>
                   <button onClick={handleDeleteNote} className="text-sm text-red-500" aria-label="Delete note">
                     Delete
                   </button>
@@ -545,6 +554,12 @@ export function NotesApp() {
           hasPin={hasPin}
           onPinRemove={handlePinRemove}
         />
+        <ShareModal
+          isOpen={shareModalOpen}
+          onClose={() => setShareModalOpen(false)}
+          noteTitle={selectedNote?.title || ""}
+          noteContent={selectedNote?.content || ""}
+        />
       </div>
     )
   }
@@ -609,6 +624,13 @@ export function NotesApp() {
                 <div className="flex items-center gap-4 ml-4">
                   <SaveIndicator />
                   <button
+                    onClick={() => setShareModalOpen(true)}
+                    className="p-2 rounded-lg text-yellow-500 hover:bg-zinc-800 transition-colors"
+                    aria-label="Share note"
+                  >
+                    <Share2 className="h-5 w-5" />
+                  </button>
+                  <button
                     onClick={handleDeleteNote}
                     className="text-sm text-red-500 transition-opacity hover:opacity-70"
                     aria-label="Delete note"
@@ -656,6 +678,12 @@ export function NotesApp() {
         onPinSet={handlePinSet}
         hasPin={hasPin}
         onPinRemove={handlePinRemove}
+      />
+      <ShareModal
+        isOpen={shareModalOpen}
+        onClose={() => setShareModalOpen(false)}
+        noteTitle={selectedNote?.title || ""}
+        noteContent={selectedNote?.content || ""}
       />
     </div>
   )
