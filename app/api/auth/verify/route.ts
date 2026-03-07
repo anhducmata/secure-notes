@@ -17,13 +17,13 @@ export async function GET(request: Request) {
     }
 
     // Get user data
-    const userDataStr = await redis.hget("users", email as string)
-    if (!userDataStr) {
+    const rawUserData = await redis.hget("users", email as string)
+    if (!rawUserData) {
       return NextResponse.redirect(new URL("/?error=user_not_found", request.url))
     }
 
-    // Update user as verified
-    const userData = JSON.parse(userDataStr as string)
+    // Update user as verified - Upstash may return already parsed object or string
+    const userData = typeof rawUserData === "string" ? JSON.parse(rawUserData) : rawUserData
     userData.verified = true
     await redis.hset("users", { [email as string]: JSON.stringify(userData) })
 
