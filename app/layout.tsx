@@ -13,7 +13,7 @@ export const metadata: Metadata = {
     title: "Notes",
   },
   icons: {
-    icon: "/icon.svg",
+    icon: "/favicon.svg",
   },
   generator: 'v0.app'
 }
