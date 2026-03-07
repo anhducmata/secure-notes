@@ -16,7 +16,15 @@ const NOTES_CACHE_KEY = (userId: string) => `notes:${userId}`
  * Each note is stored with encrypted title and content:
  * - encryptedData: { ciphertext, iv, salt, version }
  * - id, date, folder: unencrypted metadata
+ * 
+ * LIMITS:
+ * - Max 100 notes per user
+ * - Max 100KB per encrypted payload (~50,000 chars plaintext)
  */
+
+// Limits
+const MAX_NOTES_PER_USER = 100
+const MAX_PAYLOAD_SIZE_BYTES = 100 * 1024 // 100KB
 
 export interface EncryptedPayload {
   ciphertext: string
@@ -48,6 +56,13 @@ function isValidEncryptedPayload(payload: unknown): payload is EncryptedPayload 
     p.iv.length > 0 &&
     p.salt.length > 0
   )
+}
+
+/**
+ * Check encrypted payload size
+ */
+function getPayloadSize(payload: EncryptedPayload): number {
+  return new TextEncoder().encode(JSON.stringify(payload)).length
 }
 
 /**
@@ -132,6 +147,37 @@ export async function POST(request: Request) {
       )
     }
 
+    // Check payload size limit
+    const payloadSize = getPayloadSize(body.encryptedData)
+    if (payloadSize > MAX_PAYLOAD_SIZE_BYTES) {
+      return NextResponse.json(
+        { 
+          error: "Note too large",
+          message: `Note content exceeds the maximum size of ${MAX_PAYLOAD_SIZE_BYTES / 1024}KB`,
+          code: "NOTE_TOO_LARGE"
+        },
+        { status: 413 }
+      )
+    }
+
+    // Check notes count limit
+    const cacheKey = NOTES_CACHE_KEY(userId)
+    const rawNotes = await redis.get(cacheKey)
+    const existingNotes = rawNotes 
+      ? (typeof rawNotes === "string" ? JSON.parse(rawNotes) : rawNotes) as EncryptedNote[]
+      : []
+
+    if (existingNotes.length >= MAX_NOTES_PER_USER) {
+      return NextResponse.json(
+        { 
+          error: "Notes limit reached",
+          message: `You have reached the maximum of ${MAX_NOTES_PER_USER} notes. Please delete some notes to create new ones.`,
+          code: "NOTES_LIMIT_REACHED"
+        },
+        { status: 403 }
+      )
+    }
+
     const note: EncryptedNote = {
       id: body.id,
       encryptedData: body.encryptedData,
@@ -140,11 +186,7 @@ export async function POST(request: Request) {
     }
 
     // Update Redis cache (primary storage for fast reads)
-    const cacheKey = NOTES_CACHE_KEY(userId)
-    const rawNotes = await redis.get(cacheKey)
-    const notes = rawNotes 
-      ? (typeof rawNotes === "string" ? JSON.parse(rawNotes) : rawNotes) as EncryptedNote[]
-      : []
+    const notes = [...existingNotes]
     notes.unshift(note)
     await redis.set(cacheKey, JSON.stringify(notes))
     
@@ -185,6 +227,19 @@ export async function PUT(request: Request) {
           hint: "Ensure encryptedData contains ciphertext, iv, salt, and version"
         },
         { status: 400 }
+      )
+    }
+
+    // Check payload size limit
+    const payloadSize = getPayloadSize(body.encryptedData)
+    if (payloadSize > MAX_PAYLOAD_SIZE_BYTES) {
+      return NextResponse.json(
+        { 
+          error: "Note too large",
+          message: `Note content exceeds the maximum size of ${MAX_PAYLOAD_SIZE_BYTES / 1024}KB`,
+          code: "NOTE_TOO_LARGE"
+        },
+        { status: 413 }
       )
     }
 

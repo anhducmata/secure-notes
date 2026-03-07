@@ -38,6 +38,10 @@ interface User {
 
 const fetcher = (url: string) => fetch(url, { credentials: "include" }).then((r) => r.json())
 
+// Limits (must match server-side)
+const MAX_NOTES_PER_USER = 100
+const MAX_CONTENT_LENGTH = 50000 // ~50,000 characters
+
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
 function useDebounce<T>(value: T, delay: number): T {
@@ -67,6 +71,7 @@ export function NotesApp() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle") // Keep for auto-save logic
   const [pendingChanges, setPendingChanges] = useState<DecryptedNoteWithMeta | null>(null)
   const [shareModalOpen, setShareModalOpen] = useState(false)
+  const [limitError, setLimitError] = useState<string | null>(null)
 
   // Encryption key derived from user's password (set during login)
   const encryptionPassword = user?.encryptionKey || ""
@@ -278,6 +283,14 @@ export function NotesApp() {
 
   const handleNoteChange = (content: string) => {
     if (!selectedNote) return
+    
+    // Check content length limit
+    if (content.length > MAX_CONTENT_LENGTH) {
+      setLimitError(`Note content exceeds the maximum of ${MAX_CONTENT_LENGTH.toLocaleString()} characters`)
+      return
+    }
+    setLimitError(null)
+    
     const updatedNote = { ...selectedNote, content, date: new Date() }
     const updated = localNotes.map((n) => (n.id === selectedNote.id ? updatedNote : n))
     setLocalNotes(updated)
@@ -300,6 +313,13 @@ export function NotesApp() {
       return
     }
 
+    // Check notes limit
+    if (localNotes.length >= MAX_NOTES_PER_USER) {
+      setLimitError(`You have reached the maximum of ${MAX_NOTES_PER_USER} notes. Please delete some notes to create new ones.`)
+      return
+    }
+    setLimitError(null)
+
     const newNote: DecryptedNoteWithMeta = {
       id: Date.now().toString(),
       title: "New Note",
@@ -317,7 +337,7 @@ export function NotesApp() {
         encryptionPassword
       )
 
-      await fetch("/api/notes", {
+      const res = await fetch("/api/notes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -328,6 +348,16 @@ export function NotesApp() {
           folder: newNote.folder,
         }),
       })
+
+      if (!res.ok) {
+        const data = await res.json()
+        if (data.code === "NOTES_LIMIT_REACHED") {
+          setLimitError(data.message)
+          // Remove the note from local state
+          setLocalNotes(prev => prev.filter(n => n.id !== newNote.id))
+          setSelectedNote(null)
+        }
+      }
     } catch {
       // Silent fail
     }
@@ -480,8 +510,18 @@ export function NotesApp() {
                 value={selectedNote.title}
                 onChange={(e) => handleTitleChange(e.target.value)}
               />
-              <p className="text-xs text-gray-400">{formatDate(selectedNote.date)}</p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-gray-400">{formatDate(selectedNote.date)}</p>
+                <p className={`text-xs ${selectedNote.content.length > MAX_CONTENT_LENGTH * 0.9 ? 'text-red-400' : 'text-gray-500'}`}>
+                  {selectedNote.content.length.toLocaleString()} / {MAX_CONTENT_LENGTH.toLocaleString()}
+                </p>
+              </div>
             </div>
+            {limitError && (
+              <div className="mx-4 mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+                <p className="text-xs text-red-400">{limitError}</p>
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto p-4">
               <textarea
                 className="note-editor-content h-full w-full resize-none bg-transparent text-white focus:outline-none"
@@ -491,6 +531,7 @@ export function NotesApp() {
                 spellCheck
                 autoCapitalize="sentences"
                 autoCorrect="on"
+                maxLength={MAX_CONTENT_LENGTH + 100}
               />
             </div>
           </div>
@@ -511,11 +552,23 @@ export function NotesApp() {
               </div>
             </div>
             <div className="flex h-12 items-center justify-between border-b border-gray-800 px-4">
-              <span className="text-sm text-gray-400">{filteredNotes.length} Notes</span>
-              <button onClick={handleCreateNote} className="rounded-full p-2 text-yellow-500" aria-label="New note">
+              <span className="text-sm text-gray-400">
+                {filteredNotes.length} / {MAX_NOTES_PER_USER} Notes
+              </span>
+              <button 
+                onClick={handleCreateNote} 
+                className={`rounded-full p-2 ${localNotes.length >= MAX_NOTES_PER_USER ? 'text-gray-600 cursor-not-allowed' : 'text-yellow-500'}`} 
+                aria-label="New note"
+                disabled={localNotes.length >= MAX_NOTES_PER_USER}
+              >
                 <Plus className="h-5 w-5" />
               </button>
             </div>
+            {limitError && !selectedNote && (
+              <div className="mx-4 mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+                <p className="text-xs text-red-400">{limitError}</p>
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto momentum-scroll pb-20">
               {isLoading ? (
                 <NotesSkeleton />
@@ -568,15 +621,24 @@ export function NotesApp() {
         </div>
 
         <div className="flex h-12 items-center justify-between border-b border-gray-800 px-4">
-          <span className="text-sm text-gray-400">{filteredNotes.length} Notes</span>
+          <span className="text-sm text-gray-400">
+            {filteredNotes.length} / {MAX_NOTES_PER_USER} Notes
+          </span>
           <button
             onClick={handleCreateNote}
-            className="rounded-full p-2 text-yellow-500 hover:bg-zinc-800 transition-colors"
+            className={`rounded-full p-2 transition-colors ${localNotes.length >= MAX_NOTES_PER_USER ? 'text-gray-600 cursor-not-allowed' : 'text-yellow-500 hover:bg-zinc-800'}`}
             aria-label="New note"
+            disabled={localNotes.length >= MAX_NOTES_PER_USER}
           >
             <Plus className="h-5 w-5" />
           </button>
         </div>
+
+        {limitError && !selectedNote && (
+          <div className="mx-4 mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+            <p className="text-xs text-red-400">{limitError}</p>
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto momentum-scroll pb-20">
           {isLoading ? (
@@ -621,8 +683,18 @@ export function NotesApp() {
                   </button>
                 </div>
               </div>
-              <p className="text-sm text-gray-400">{formatDate(selectedNote.date)}</p>
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-gray-400">{formatDate(selectedNote.date)}</p>
+                <p className={`text-xs ${selectedNote.content.length > MAX_CONTENT_LENGTH * 0.9 ? 'text-red-400' : 'text-gray-500'}`}>
+                  {selectedNote.content.length.toLocaleString()} / {MAX_CONTENT_LENGTH.toLocaleString()} characters
+                </p>
+              </div>
             </div>
+            {limitError && (
+              <div className="mx-6 mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+                <p className="text-sm text-red-400">{limitError}</p>
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto p-6">
               <textarea
                 className="note-editor-content h-full w-full resize-none bg-transparent text-lg text-white focus:outline-none"
@@ -632,6 +704,7 @@ export function NotesApp() {
                 spellCheck
                 autoCapitalize="sentences"
                 autoCorrect="on"
+                maxLength={MAX_CONTENT_LENGTH + 100}
               />
             </div>
           </div>
