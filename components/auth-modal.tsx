@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { X, Mail, Lock, User, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react"
 
 type Tab = "signin" | "signup" | "forgot"
@@ -367,8 +368,8 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
               <SubmitButton label="Create Account" isLoading={isLoading} />
               <p className="text-center text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.3)" }}>
                 By creating an account, you agree to our{" "}
-                <span style={{ color: "rgba(234,179,8,0.7)" }}>Terms of Service</span> and{" "}
-                <span style={{ color: "rgba(234,179,8,0.7)" }}>Privacy Policy</span>.
+                <Link href="/terms" target="_blank" className="hover:underline" style={{ color: "rgba(234,179,8,0.7)" }}>Terms of Service</Link> and{" "}
+                <Link href="/privacy" target="_blank" className="hover:underline" style={{ color: "rgba(234,179,8,0.7)" }}>Privacy Policy</Link>.
               </p>
             </form>
           )}
