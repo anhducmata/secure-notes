@@ -26,15 +26,16 @@ export async function POST(request: Request) {
     }
 
     // Get user data
-    const userDataStr = await redis.hget("users", email.toLowerCase())
-    if (!userDataStr) {
+    const rawUserData = await redis.hget("users", email.toLowerCase())
+    if (!rawUserData) {
       return NextResponse.json(
         { error: "Invalid email or password" },
         { status: 401 }
       )
     }
 
-    const userData = JSON.parse(userDataStr as string)
+    // Upstash may return already parsed object or string
+    const userData = typeof rawUserData === "string" ? JSON.parse(rawUserData) : rawUserData
 
     // Check password - try bcrypt first, then fallback to legacy SHA-256
     let isValidPassword = false
