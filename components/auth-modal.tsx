@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { X, Mail, Lock, User, Eye, EyeOff, CheckCircle } from "lucide-react"
+import { X, Mail, Lock, User, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react"
 
 type Tab = "signin" | "signup"
 
@@ -16,6 +16,7 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
   const [showPassword, setShowPassword] = useState(false)
   const [emailSent, setEmailSent] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   // Sign In state
   const [signInEmail, setSignInEmail] = useState("")
@@ -31,24 +32,107 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
-    // Simulate auth
-    await new Promise((r) => setTimeout(r, 900))
-    setIsLoading(false)
-    const name = signInEmail.split("@")[0]
-    onSignIn({ name: name.charAt(0).toUpperCase() + name.slice(1), email: signInEmail })
-    onClose()
+    setError(null)
+
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: signInEmail, password: signInPassword }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.error || "Failed to sign in")
+        setIsLoading(false)
+        return
+      }
+
+      onSignIn({ name: data.user.name, email: data.user.email })
+      onClose()
+    } catch {
+      setError("Something went wrong. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
-    await new Promise((r) => setTimeout(r, 900))
-    setIsLoading(false)
-    setEmailSent(true)
+    setError(null)
+
+    if (signUpPassword.length < 6) {
+      setError("Password must be at least 6 characters")
+      setIsLoading(false)
+      return
+    }
+
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: signUpEmail,
+          password: signUpPassword,
+          name: signUpName,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.error || "Failed to create account")
+        setIsLoading(false)
+        return
+      }
+
+      setEmailSent(true)
+    } catch {
+      setError("Something went wrong. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleResendEmail = async () => {
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: signUpEmail,
+          password: signUpPassword,
+          name: signUpName,
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        // If user exists, they may have already verified
+        if (data.error?.includes("already exists")) {
+          setError("This email is already registered. Try signing in.")
+        }
+      }
+    } catch {
+      setError("Failed to resend email")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === e.currentTarget) onClose()
+  }
+
+  const switchTab = (t: Tab) => {
+    setTab(t)
+    setEmailSent(false)
+    setError(null)
   }
 
   return (
@@ -107,7 +191,7 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
           {(["signin", "signup"] as Tab[]).map((t) => (
             <button
               key={t}
-              onClick={() => { setTab(t); setEmailSent(false) }}
+              onClick={() => switchTab(t)}
               className="flex-1 rounded-lg py-2 text-sm font-medium transition-all"
               style={{
                 background: tab === t ? "rgba(255,255,255,0.12)" : "transparent",
@@ -119,6 +203,17 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
             </button>
           ))}
         </div>
+
+        {/* Error message */}
+        {error && (
+          <div
+            className="mx-6 mb-4 flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs"
+            style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.25)", color: "rgb(252,165,165)" }}
+          >
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
 
         {/* Form area */}
         <div className="px-6 pb-7">
@@ -160,7 +255,7 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
               <SubmitButton label="Sign In" isLoading={isLoading} />
             </form>
           ) : emailSent ? (
-            <EmailConfirmation email={signUpEmail} onBack={() => setEmailSent(false)} />
+            <EmailConfirmation email={signUpEmail} onBack={() => setEmailSent(false)} onResend={handleResendEmail} isLoading={isLoading} />
           ) : (
             <form onSubmit={handleSignUp} className="flex flex-col gap-3">
               <InputField
@@ -181,7 +276,7 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
               />
               <InputField
                 type={showPassword ? "text" : "password"}
-                placeholder="Password"
+                placeholder="Password (min 6 characters)"
                 value={signUpPassword}
                 onChange={setSignUpPassword}
                 icon={<Lock className="h-4 w-4" />}
@@ -245,9 +340,8 @@ function InputField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         required={required}
-        className="flex-1 bg-transparent text-sm text-white placeholder-opacity-0 focus:outline-none"
+        className="flex-1 bg-transparent text-sm text-white focus:outline-none"
         style={{ color: "rgba(255,255,255,0.9)" }}
-        placeholder-style={{ color: "rgba(255,255,255,0.3)" }}
       />
       {suffix}
     </div>
@@ -287,7 +381,7 @@ function SubmitButton({ label, isLoading }: { label: string; isLoading: boolean 
   )
 }
 
-function EmailConfirmation({ email, onBack }: { email: string; onBack: () => void }) {
+function EmailConfirmation({ email, onBack, onResend, isLoading }: { email: string; onBack: () => void; onResend: () => void; isLoading: boolean }) {
   return (
     <div className="flex flex-col items-center gap-4 py-2 text-center">
       <div
@@ -308,8 +402,8 @@ function EmailConfirmation({ email, onBack }: { email: string; onBack: () => voi
       </div>
       <p className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
         Didn&apos;t receive it?{" "}
-        <button type="button" style={{ color: "rgba(234,179,8,0.8)" }}>
-          Resend email
+        <button type="button" onClick={onResend} disabled={isLoading} style={{ color: "rgba(234,179,8,0.8)" }}>
+          {isLoading ? "Sending..." : "Resend email"}
         </button>
       </p>
       <button
