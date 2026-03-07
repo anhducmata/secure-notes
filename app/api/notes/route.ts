@@ -54,12 +54,19 @@ async function getAuthenticatedUserId(): Promise<string | null> {
   const cookieStore = await cookies()
   const sessionToken = cookieStore.get("session")?.value
   
+  console.log("[v0] Session token:", sessionToken ? sessionToken.substring(0, 8) + "..." : "none")
+  
   if (!sessionToken) return null
   
-  const sessionDataStr = await redis.get(`session:${sessionToken}`)
-  if (!sessionDataStr) return null
+  const rawSessionData = await redis.get(`session:${sessionToken}`)
+  console.log("[v0] Raw session data type:", typeof rawSessionData)
   
-  const sessionData = JSON.parse(sessionDataStr as string)
+  if (!rawSessionData) return null
+  
+  // Upstash may return already parsed object or string
+  const sessionData = typeof rawSessionData === "string" ? JSON.parse(rawSessionData) : rawSessionData
+  console.log("[v0] Session user email:", sessionData.email)
+  
   return sessionData.email
 }
 

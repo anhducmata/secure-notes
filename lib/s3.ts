@@ -34,14 +34,22 @@ export async function uploadNote(
 ): Promise<void> {
   const key = getNoteKey(userId, noteId)
   
-  await s3Client.send(
-    new PutObjectCommand({
-      Bucket: S3_BUCKET,
-      Key: key,
-      Body: JSON.stringify(encryptedData),
-      ContentType: "application/json",
-    })
-  )
+  console.log("[v0] S3 Upload - Bucket:", S3_BUCKET, "Key:", key)
+  
+  try {
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: key,
+        Body: JSON.stringify(encryptedData),
+        ContentType: "application/json",
+      })
+    )
+    console.log("[v0] S3 Upload successful:", key)
+  } catch (error) {
+    console.error("[v0] S3 Upload error:", error)
+    throw error
+  }
 }
 
 /**
@@ -93,22 +101,34 @@ export async function deleteNote(userId: string, noteId: string): Promise<void> 
 export async function listUserNotes(userId: string): Promise<string[]> {
   const prefix = getUserNotesPrefix(userId)
   
-  const response = await s3Client.send(
-    new ListObjectsV2Command({
-      Bucket: S3_BUCKET,
-      Prefix: prefix,
-    })
-  )
+  console.log("[v0] S3 List - Bucket:", S3_BUCKET, "Prefix:", prefix)
   
-  if (!response.Contents) return []
-  
-  return response.Contents
-    .map((obj) => obj.Key!)
-    .filter((key) => key.endsWith(".json"))
-    .map((key) => {
-      // Extract note ID from path: notes/userId/noteId.json
-      const parts = key.split("/")
-      const filename = parts[parts.length - 1]
-      return filename.replace(".json", "")
-    })
+  try {
+    const response = await s3Client.send(
+      new ListObjectsV2Command({
+        Bucket: S3_BUCKET,
+        Prefix: prefix,
+      })
+    )
+    
+    console.log("[v0] S3 List response - Contents count:", response.Contents?.length || 0)
+    
+    if (!response.Contents) return []
+    
+    const noteIds = response.Contents
+      .map((obj) => obj.Key!)
+      .filter((key) => key.endsWith(".json"))
+      .map((key) => {
+        // Extract note ID from path: notes/userId/noteId.json
+        const parts = key.split("/")
+        const filename = parts[parts.length - 1]
+        return filename.replace(".json", "")
+      })
+    
+    console.log("[v0] S3 List - Note IDs:", noteIds)
+    return noteIds
+  } catch (error) {
+    console.error("[v0] S3 List error:", error)
+    throw error
+  }
 }
