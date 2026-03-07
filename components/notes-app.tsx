@@ -5,6 +5,8 @@ import useSWR from "swr"
 import { Plus, Search, ChevronLeft, Check, Loader2, Lock } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
+import { SettingsModal } from "@/components/settings-modal"
+import { PinLoginModal, storePinData, getPinData, removePinData } from "@/components/pin-login-modal"
 import {
   encryptNote,
   decryptNote,
@@ -54,6 +56,9 @@ export function NotesApp() {
   const [user, setUser] = useState<User | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [pinLoginOpen, setPinLoginOpen] = useState(false)
+  const [hasPin, setHasPin] = useState(false)
   const [localNotes, setLocalNotes] = useState<DecryptedNoteWithMeta[]>([])
   const [selectedNote, setSelectedNote] = useState<DecryptedNoteWithMeta | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
@@ -64,18 +69,35 @@ export function NotesApp() {
   // Encryption key derived from user's password (set during login)
   const encryptionPassword = user?.encryptionKey || ""
 
-  // Check for existing session on mount
+  // Check for existing session and PIN on mount
   useEffect(() => {
     const checkSession = async () => {
       try {
+        // Check for PIN data first
+        const pinData = getPinData()
+        if (pinData) {
+          setHasPin(true)
+        }
+
         const res = await fetch("/api/auth/session", { credentials: "include" })
         const data = await res.json()
+        
         if (data.user && data.user.encryptionKey) {
           // User has valid session with encryption key - fully authenticated
           setUser(data.user)
+          // Check if PIN exists for this user
+          if (pinData && pinData.email === data.user.email) {
+            setHasPin(true)
+          }
         } else if (data.user) {
-          // User has session but no encryption key - needs to re-login
-          setUser({ ...data.user, encryptionKey: undefined })
+          // User has session but no encryption key
+          // Check if they have a valid PIN for quick access
+          if (pinData && pinData.email === data.user.email) {
+            setUser({ ...data.user, encryptionKey: undefined })
+            setPinLoginOpen(true)
+          } else {
+            setUser({ ...data.user, encryptionKey: undefined })
+          }
         }
       } catch (e) {
         console.error("Session check failed:", e)
@@ -280,9 +302,31 @@ export function NotesApp() {
     } catch (e) {
       console.error("Sign out failed:", e)
     }
+    removePinData()
+    setHasPin(false)
     setUser(null)
     setLocalNotes([])
     setSelectedNote(null)
+  }
+
+  // PIN handlers
+  const handlePinSet = (pin: string) => {
+    if (user?.encryptionKey) {
+      storePinData(pin, user.encryptionKey, user.email)
+      setHasPin(true)
+    }
+  }
+
+  const handlePinRemove = () => {
+    removePinData()
+    setHasPin(false)
+  }
+
+  const handlePinLoginSuccess = (encryptionKey: string) => {
+    if (user) {
+      setUser({ ...user, encryptionKey })
+      setPinLoginOpen(false)
+    }
   }
 
   // ── Save status indicator ─────────────────────────────────────────────────
@@ -313,6 +357,7 @@ export function NotesApp() {
         user={user?.encryptionKey ? user : null}
         onClick={() => setAuthOpen(true)}
         onSignOut={handleSignOut}
+        onSettings={() => setSettingsOpen(true)}
       />
     </div>
   )
@@ -348,6 +393,16 @@ export function NotesApp() {
           </p>
         </div>
         <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
+        <PinLoginModal
+          isOpen={pinLoginOpen}
+          onClose={() => setPinLoginOpen(false)}
+          onSuccess={handlePinLoginSuccess}
+          onSwitchToPassword={() => {
+            setPinLoginOpen(false)
+            setAuthOpen(true)
+          }}
+          userName={user?.name || ""}
+        />
       </div>
     )
   }
@@ -429,6 +484,14 @@ export function NotesApp() {
         {avatarButton}
 
         <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
+        <SettingsModal
+          isOpen={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          user={user}
+          onPinSet={handlePinSet}
+          hasPin={hasPin}
+          onPinRemove={handlePinRemove}
+        />
       </div>
     )
   }
@@ -532,6 +595,14 @@ export function NotesApp() {
       {avatarButton}
 
       <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
+      <SettingsModal
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        user={user}
+        onPinSet={handlePinSet}
+        hasPin={hasPin}
+        onPinRemove={handlePinRemove}
+      />
     </div>
   )
 }
