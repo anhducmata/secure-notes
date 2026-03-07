@@ -3,8 +3,15 @@ import { redis } from "@/lib/redis"
 import bcrypt from "bcryptjs"
 import crypto from "crypto"
 
+const BCRYPT_SALT_ROUNDS = 12
+
 function generateSessionToken(): string {
   return crypto.randomBytes(32).toString("hex")
+}
+
+// Legacy SHA-256 hash for migration
+function legacyHashPassword(password: string): string {
+  return crypto.createHash("sha256").update(password).digest("hex")
 }
 
 export async function POST(request: Request) {
@@ -29,8 +36,26 @@ export async function POST(request: Request) {
 
     const userData = JSON.parse(userDataStr as string)
 
-    // Verify password with bcrypt
-    const isValidPassword = await bcrypt.compare(password, userData.password)
+    // Check password - try bcrypt first, then fallback to legacy SHA-256
+    let isValidPassword = false
+    const storedHash = userData.password
+    
+    // If stored hash looks like bcrypt ($2a$ or $2b$ prefix), use bcrypt compare
+    if (storedHash.startsWith("$2a$") || storedHash.startsWith("$2b$")) {
+      isValidPassword = await bcrypt.compare(password, storedHash)
+    } else {
+      // Legacy SHA-256 hash
+      isValidPassword = storedHash === legacyHashPassword(password)
+      
+      // Migrate to bcrypt if password is correct
+      if (isValidPassword) {
+        const newHash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS)
+        userData.password = newHash
+        await redis.hset("users", { [email.toLowerCase()]: JSON.stringify(userData) })
+        console.log("[v0] Migrated user password to bcrypt:", email.toLowerCase())
+      }
+    }
+    
     if (!isValidPassword) {
       return NextResponse.json(
         { error: "Invalid email or password" },

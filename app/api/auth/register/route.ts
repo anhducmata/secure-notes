@@ -54,8 +54,10 @@ export async function POST(request: Request) {
     // Store verification token
     await redis.set(`verify:${verificationToken}`, email.toLowerCase(), { ex: 86400 }) // 24h expiry
 
-    // Send verification email
-    const verifyUrl = `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000"}/api/auth/verify?token=${verificationToken}`
+    // Send verification email - use custom domain if set, otherwise fall back to VERCEL_URL
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
+    const verifyUrl = `${baseUrl}/api/auth/verify?token=${verificationToken}`
 
     try {
       await resend.emails.send({
