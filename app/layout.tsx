@@ -12,7 +12,10 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "Notes",
   },
-    generator: 'v0.app'
+  icons: {
+    icon: "/icon.svg",
+  },
+  generator: 'v0.app'
 }
 
 export default function RootLayout({

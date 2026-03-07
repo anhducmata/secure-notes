@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { X, Mail, Lock, User, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react"
 
-type Tab = "signin" | "signup"
+type Tab = "signin" | "signup" | "forgot"
 
 interface AuthModalProps {
   isOpen: boolean
@@ -26,6 +26,10 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
   const [signUpName, setSignUpName] = useState("")
   const [signUpEmail, setSignUpEmail] = useState("")
   const [signUpPassword, setSignUpPassword] = useState("")
+
+  // Forgot Password state
+  const [forgotEmail, setForgotEmail] = useState("")
+  const [resetEmailSent, setResetEmailSent] = useState(false)
 
   if (!isOpen) return null
 
@@ -97,6 +101,34 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
     }
   }
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: forgotEmail }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.error || "Failed to send reset email")
+        setIsLoading(false)
+        return
+      }
+
+      setResetEmailSent(true)
+    } catch {
+      setError("Something went wrong. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const handleResendEmail = async () => {
     setIsLoading(true)
     setError(null)
@@ -133,6 +165,7 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
   const switchTab = (t: Tab) => {
     setTab(t)
     setEmailSent(false)
+    setResetEmailSent(false)
     setError(null)
   }
 
@@ -171,39 +204,49 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
             className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl"
             style={{ background: "rgba(234,179,8,0.15)", border: "1px solid rgba(234,179,8,0.25)" }}
           >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
-                stroke="rgb(234,179,8)"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            {tab === "forgot" ? (
+              <Mail className="h-5 w-5" style={{ color: "rgb(234,179,8)" }} />
+            ) : (
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
+                  stroke="rgb(234,179,8)"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            )}
           </div>
-          <h2 className="text-lg font-semibold text-white tracking-tight">Notes</h2>
+          <h2 className="text-lg font-semibold text-white tracking-tight">
+            {tab === "forgot" ? "Reset Password" : "Notes"}
+          </h2>
           <p className="mt-1 text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
-            Sign in to sync your notes across devices
+            {tab === "forgot" 
+              ? "Enter your email to receive a reset link" 
+              : "Sign in to sync your notes across devices"}
           </p>
         </div>
 
-        {/* Tab switcher */}
-        <div className="mx-6 mb-5 flex rounded-xl p-1" style={{ background: "rgba(255,255,255,0.06)" }}>
-          {(["signin", "signup"] as Tab[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => switchTab(t)}
-              className="flex-1 rounded-lg py-2 text-sm font-medium transition-all"
-              style={{
-                background: tab === t ? "rgba(255,255,255,0.12)" : "transparent",
-                color: tab === t ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.4)",
-                boxShadow: tab === t ? "0 1px 4px rgba(0,0,0,0.3)" : "none",
-              }}
-            >
-              {t === "signin" ? "Sign In" : "Sign Up"}
-            </button>
-          ))}
-        </div>
+        {/* Tab switcher - hide when in forgot password mode */}
+        {tab !== "forgot" && (
+          <div className="mx-6 mb-5 flex rounded-xl p-1" style={{ background: "rgba(255,255,255,0.06)" }}>
+            {(["signin", "signup"] as Tab[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => switchTab(t)}
+                className="flex-1 rounded-lg py-2 text-sm font-medium transition-all"
+                style={{
+                  background: tab === t ? "rgba(255,255,255,0.12)" : "transparent",
+                  color: tab === t ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.4)",
+                  boxShadow: tab === t ? "0 1px 4px rgba(0,0,0,0.3)" : "none",
+                }}
+              >
+                {t === "signin" ? "Sign In" : "Sign Up"}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Error message */}
         {error && (
@@ -218,7 +261,34 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
 
         {/* Form area */}
         <div className="px-6 pb-7">
-          {tab === "signin" ? (
+          {tab === "forgot" ? (
+            resetEmailSent ? (
+              <ResetEmailConfirmation 
+                email={forgotEmail} 
+                onBack={() => switchTab("signin")} 
+              />
+            ) : (
+              <form onSubmit={handleForgotPassword} className="flex flex-col gap-3">
+                <InputField
+                  type="email"
+                  placeholder="Email"
+                  value={forgotEmail}
+                  onChange={setForgotEmail}
+                  icon={<Mail className="h-4 w-4" />}
+                  required
+                />
+                <SubmitButton label="Send Reset Link" isLoading={isLoading} />
+                <button
+                  type="button"
+                  onClick={() => switchTab("signin")}
+                  className="text-xs mt-1"
+                  style={{ color: "rgba(255,255,255,0.4)" }}
+                >
+                  Back to Sign In
+                </button>
+              </form>
+            )
+          ) : tab === "signin" ? (
             <form onSubmit={handleSignIn} className="flex flex-col gap-3">
               <InputField
                 type="email"
@@ -248,6 +318,7 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
               />
               <button
                 type="button"
+                onClick={() => switchTab("forgot")}
                 className="text-right text-xs"
                 style={{ color: "rgba(234,179,8,0.8)" }}
               >
@@ -414,6 +485,42 @@ function EmailConfirmation({ email, onBack, onResend, isLoading }: { email: stri
         style={{ color: "rgba(255,255,255,0.3)" }}
       >
         Back to sign up
+      </button>
+    </div>
+  )
+}
+
+function ResetEmailConfirmation({ email, onBack }: { email: string; onBack: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-4 py-2 text-center">
+      <div
+        className="flex h-14 w-14 items-center justify-center rounded-full"
+        style={{ background: "rgba(234,179,8,0.12)", border: "1px solid rgba(234,179,8,0.2)" }}
+      >
+        <CheckCircle className="h-7 w-7" style={{ color: "rgb(234,179,8)" }} />
+      </div>
+      <div>
+        <p className="text-sm font-semibold text-white">Check your email</p>
+        <p className="mt-1.5 text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.4)" }}>
+          If an account exists for
+          <br />
+          <span className="font-medium" style={{ color: "rgba(255,255,255,0.7)" }}>
+            {email}
+          </span>
+          <br />
+          you will receive a password reset link.
+        </p>
+      </div>
+      <p className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
+        Link expires in 1 hour
+      </p>
+      <button
+        onClick={onBack}
+        type="button"
+        className="text-xs"
+        style={{ color: "rgba(234,179,8,0.8)" }}
+      >
+        Back to Sign In
       </button>
     </div>
   )
