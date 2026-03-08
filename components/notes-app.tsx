@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import useSWR from "swr"
 import { Plus, Search, ChevronLeft, Lock, Share2, Trash2 } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
@@ -42,6 +42,10 @@ const fetcher = (url: string) => fetch(url, { credentials: "include" }).then((r)
 const MAX_NOTES_PER_USER = 100
 const MAX_CONTENT_LENGTH = 50000 // ~50,000 characters
 
+// Tab-visibility lock thresholds
+const PIN_TIMEOUT = 60 * 60 * 1000          // 1 hour  → show PIN login
+const LOGOUT_TIMEOUT = 12 * 60 * 60 * 1000  // 12 hours → full logout
+
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
 function useDebounce<T>(value: T, delay: number): T {
@@ -76,54 +80,44 @@ export function NotesApp() {
   // Encryption key derived from user's password (set during login)
   const encryptionPassword = user?.encryptionKey || ""
 
-  // Inactivity timeout - 1 minute
-  const INACTIVITY_TIMEOUT = 60 * 1000 // 1 minute in ms
+  // Persisted across effect re-runs so a user-state change cannot reset the clock
+  const hiddenAtRef = useRef<number | null>(null)
 
-  // Inactivity auto-lock
+  // Tab-visibility auto-lock: lock based on how long the tab was hidden
   useEffect(() => {
     if (!user?.encryptionKey) return
 
-    let timeoutId: NodeJS.Timeout
-
-    const resetTimer = () => {
-      clearTimeout(timeoutId)
-      timeoutId = setTimeout(() => {
-        // Lock the app - clear encryption key but keep user info
+    const applyLock = (hiddenDuration: number) => {
+      if (hiddenDuration >= LOGOUT_TIMEOUT) {
+        // Hidden > 12 h → full logout
+        setUser({ ...user, encryptionKey: undefined })
+      } else if (hiddenDuration >= PIN_TIMEOUT) {
+        // Hidden 1 h – 12 h → show PIN login
         const pinData = getPinData()
         if (pinData && pinData.email === user.email) {
-          // Has PIN - show PIN login
           setUser({ ...user, encryptionKey: undefined })
           setPinLoginOpen(true)
         } else {
-          // No PIN - full logout
+          // No PIN set → full logout
           setUser({ ...user, encryptionKey: undefined })
         }
-      }, INACTIVITY_TIMEOUT)
+      }
+      // Hidden < 1 h → do nothing, notes remain accessible
     }
 
-    // Events that reset the timer
-    const events = ["mousedown", "mousemove", "keydown", "scroll", "touchstart", "click"]
-    
-    events.forEach(event => {
-      document.addEventListener(event, resetTimer, { passive: true })
-    })
-
-    // Also reset on visibility change (tab focus)
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        resetTimer()
+      if (document.visibilityState === "hidden") {
+        hiddenAtRef.current = Date.now()
+      } else if (document.visibilityState === "visible" && hiddenAtRef.current !== null) {
+        const hiddenDuration = Date.now() - hiddenAtRef.current
+        hiddenAtRef.current = null
+        applyLock(hiddenDuration)
       }
     }
+
     document.addEventListener("visibilitychange", handleVisibilityChange)
 
-    // Start the timer
-    resetTimer()
-
     return () => {
-      clearTimeout(timeoutId)
-      events.forEach(event => {
-        document.removeEventListener(event, resetTimer)
-      })
       document.removeEventListener("visibilitychange", handleVisibilityChange)
     }
   }, [user])
