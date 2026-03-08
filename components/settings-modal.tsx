@@ -1,7 +1,10 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { X, Shield, Key, ChevronRight, Check, AlertCircle, Lock, Server, Eye } from "lucide-react"
+import { X, Shield, Key, ChevronRight, Check, AlertCircle, Lock, Server, Eye, Github } from "lucide-react"
+
+const GITHUB_URL = process.env.NEXT_PUBLIC_GITHUB_URL ?? "https://github.com/anhducmata/secure-notes"
+const COMMIT_SHA = process.env.NEXT_PUBLIC_COMMIT_SHA ?? "unknown"
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -175,6 +178,38 @@ export function SettingsModal({ isOpen, onClose, user, onPinSet, hasPin, onPinRe
           </div>
           <ChevronRight className="h-4 w-4" style={{ color: "rgba(255,255,255,0.3)" }} />
         </button>
+
+        {/* About / Build Info */}
+        <div
+          className="rounded-xl px-4 py-3.5"
+          style={{ background: "rgba(255,255,255,0.06)" }}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className="flex h-9 w-9 items-center justify-center rounded-lg"
+              style={{ background: "rgba(255,255,255,0.08)" }}
+            >
+              <Github className="h-4.5 w-4.5" style={{ color: "rgba(255,255,255,0.7)" }} />
+            </div>
+            <div className="flex-1 text-left">
+              <p className="text-sm font-medium text-white">About</p>
+              <div className="mt-0.5 flex flex-col gap-0.5">
+                <a
+                  href={GITHUB_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs hover:underline"
+                  style={{ color: "rgba(255,255,255,0.5)" }}
+                >
+                  {GITHUB_URL.replace("https://", "")}
+                </a>
+                <p className="text-xs font-mono" style={{ color: "rgba(255,255,255,0.3)" }}>
+                  build&nbsp;{COMMIT_SHA}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </>
   )
