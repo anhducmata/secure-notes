@@ -5,7 +5,7 @@ const path = require("path")
 app.commandLine.appendSwitch("enable-features", "MacLoopbackAudioForScreenShare")
 
 const DEV_URL = process.env.ELECTRON_DEV_URL || "http://localhost:3000"
-const PROD_URL = process.env.ELECTRON_PROD_URL || DEV_URL
+let PROD_URL = process.env.ELECTRON_PROD_URL
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -14,6 +14,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -22,7 +23,9 @@ function createWindow() {
   })
 
   const url = process.env.NODE_ENV === "development" ? DEV_URL : PROD_URL
-  win.loadURL(url)
+  if (url) {
+    win.loadURL(url)
+  }
 
   // Grant media/screen permissions automatically
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
@@ -64,7 +67,26 @@ app.whenReady().then(async () => {
     console.log("[main] screen recording permission status:", screenStatus)
   }
 
-  createWindow()
+  if (process.env.NODE_ENV !== "development" && !PROD_URL) {
+    const { createServer } = require("http")
+    const next = require("next")
+    
+    // Create an instance of the Next.js app
+    const nextApp = next({ dev: false, dir: app.getAppPath() })
+    const handle = nextApp.getRequestHandler()
+    
+    await nextApp.prepare()
+    const server = createServer((req, res) => handle(req, res))
+    
+    server.listen(0, () => {
+      const port = server.address().port
+      PROD_URL = `http://localhost:${port}`
+      createWindow()
+    })
+  } else {
+    createWindow()
+  }
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

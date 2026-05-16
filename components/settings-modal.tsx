@@ -4,6 +4,8 @@ import { useState, useEffect } from "react"
 import { X, Shield, Key, Check, AlertCircle, Lock, Server, Eye, EyeOff, Github, Mic, Bot } from "lucide-react"
 
 const SONIOX_API_KEY_STORAGE = "soniox_api_key"
+const OPENAI_API_KEY_STORAGE = "openai_api_key"
+const DEEPSEEK_API_KEY_STORAGE = "deepseek_api_key"
 const SILENCE_TIMEOUT_STORAGE = "voice_silence_timeout"
 const TRANSCRIPTION_LANG_STORAGE = "voice_transcription_lang"
 const DEFAULT_SILENCE_TIMEOUT = 30
@@ -34,6 +36,16 @@ export function getSonioxApiKey(): string {
   )
 }
 
+export function getOpenAiApiKey(): string {
+  if (typeof window === "undefined") return ""
+  return localStorage.getItem(OPENAI_API_KEY_STORAGE) || ""
+}
+
+export function getDeepseekApiKey(): string {
+  if (typeof window === "undefined") return ""
+  return localStorage.getItem(DEEPSEEK_API_KEY_STORAGE) || ""
+}
+
 export function getSilenceTimeout(): number {
   if (typeof window === "undefined") return DEFAULT_SILENCE_TIMEOUT
   const v = parseInt(localStorage.getItem(SILENCE_TIMEOUT_STORAGE) || "", 10)
@@ -45,13 +57,7 @@ export function getTranscriptionLang(): string {
   return localStorage.getItem(TRANSCRIPTION_LANG_STORAGE) || DEFAULT_LANG
 }
 
-function setSonioxApiKey(key: string) {
-  if (key.trim()) {
-    localStorage.setItem(SONIOX_API_KEY_STORAGE, key.trim())
-  } else {
-    localStorage.removeItem(SONIOX_API_KEY_STORAGE)
-  }
-}
+
 
 const GITHUB_URL = process.env.NEXT_PUBLIC_GITHUB_URL ?? "https://github.com/anhducmata/secure-notes"
 const COMMIT_SHA = process.env.NEXT_PUBLIC_COMMIT_SHA ?? "unknown"
@@ -69,10 +75,11 @@ const LANGUAGES = [
   { code: "hi", label: "Hindi" },
 ]
 
-type Tab = "general" | "security" | "about"
+type Tab = "general" | "api_keys" | "security" | "about"
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
+  { id: "api_keys", label: "API Keys" },
   { id: "security", label: "Security" },
   { id: "about", label: "About" },
 ]
@@ -350,6 +357,113 @@ export function SettingsModal({ isOpen, onClose, user, onPinSet, hasPin, onPinRe
     </div>
   )
 
+  
+  const renderApiKeys = () => (
+    <div className="space-y-3">
+      <div
+        className="rounded-xl px-4 py-3.5 space-y-4"
+        style={{ background: "rgba(255,255,255,0.06)" }}
+      >
+        <div className="flex items-center gap-3 mb-2">
+          <div
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+            style={{ background: "rgba(234,179,8,0.12)" }}
+          >
+            <Key className="h-4 w-4 text-yellow-500" />
+          </div>
+          <div className="flex-1 text-left">
+            <p className="text-sm font-medium text-white">API Keys</p>
+            <p className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
+              Provide your own API keys for services
+            </p>
+          </div>
+        </div>
+
+        {/* Soniox Key */}
+        <div>
+          <label className="block text-xs font-medium mb-1.5" style={{ color: "rgba(255,255,255,0.6)" }}>Soniox API Key (Voice)</label>
+          <div className="relative">
+            <input
+              type={showSonioxKey ? "text" : "password"}
+              value={sonioxKey}
+              onChange={(e) => setSonioxKey(e.target.value)}
+              placeholder="Paste API key…"
+              className="w-full rounded-lg px-3 py-2 pr-9 text-xs text-white focus:outline-none focus:ring-1 focus:ring-yellow-500 font-mono"
+              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowSonioxKey((v) => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2"
+              style={{ color: "rgba(255,255,255,0.35)" }}
+            >
+              {showSonioxKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+        </div>
+
+        {/* OpenAI Key */}
+        <div>
+          <label className="block text-xs font-medium mb-1.5" style={{ color: "rgba(255,255,255,0.6)" }}>OpenAI API Key</label>
+          <div className="relative">
+            <input
+              type={showOpenaiKey ? "text" : "password"}
+              value={openaiKey}
+              onChange={(e) => setOpenaiKey(e.target.value)}
+              placeholder="sk-..."
+              className="w-full rounded-lg px-3 py-2 pr-9 text-xs text-white focus:outline-none focus:ring-1 focus:ring-yellow-500 font-mono"
+              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowOpenaiKey((v) => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2"
+              style={{ color: "rgba(255,255,255,0.35)" }}
+            >
+              {showOpenaiKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+        </div>
+
+        {/* DeepSeek Key */}
+        <div>
+          <label className="block text-xs font-medium mb-1.5" style={{ color: "rgba(255,255,255,0.6)" }}>DeepSeek API Key</label>
+          <div className="relative">
+            <input
+              type={showDeepseekKey ? "text" : "password"}
+              value={deepseekKey}
+              onChange={(e) => setDeepseekKey(e.target.value)}
+              placeholder="Paste API key…"
+              className="w-full rounded-lg px-3 py-2 pr-9 text-xs text-white focus:outline-none focus:ring-1 focus:ring-yellow-500 font-mono"
+              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowDeepseekKey((v) => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2"
+              style={{ color: "rgba(255,255,255,0.35)" }}
+            >
+              {showDeepseekKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-2">
+          <button
+            onClick={handleApiKeysSave}
+            className="shrink-0 rounded-lg px-4 py-2 text-xs font-medium transition-colors"
+            style={{
+              background: apiKeysSaved ? "rgba(34,197,94,0.15)" : "rgba(234,179,8,0.15)",
+              color: apiKeysSaved ? "rgb(74,222,128)" : "rgb(234,179,8)",
+            }}
+          >
+            {apiKeysSaved ? <Check className="h-3.5 w-3.5" /> : "Save Keys"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
   const renderSecurity = () => (
     <div className="space-y-3">
       {/* PIN Setup */}
@@ -592,6 +706,7 @@ export function SettingsModal({ isOpen, onClose, user, onPinSet, hasPin, onPinRe
         {/* Tab Content */}
         <div className="px-4 pb-5 overflow-y-auto">
           {tab === "general" && renderGeneral()}
+          {tab === "api_keys" && renderApiKeys()}
           {tab === "security" && renderSecurity()}
           {tab === "about" && renderAbout()}
         </div>

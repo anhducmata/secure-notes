@@ -5,7 +5,7 @@ import useSWR from "swr"
 import { Plus, Search, ChevronLeft, Lock, Share2, Trash2, Brain, Send, Bot, User, Loader2, FileText, MessageSquare, Trash, Eye, EyeOff, Download, Play, Pause, X } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
-import { SettingsModal, getSonioxApiKey, getSilenceTimeout, getTranscriptionLang } from "@/components/settings-modal"
+import { SettingsModal, getSonioxApiKey, getSilenceTimeout, getTranscriptionLang, getOpenAiApiKey, getDeepseekApiKey } from "@/components/settings-modal"
 import { PinLoginModal, storePinData, getPinData, removePinData } from "@/components/pin-login-modal"
 import {
   encryptNote,
@@ -1135,12 +1135,10 @@ export function NotesApp() {
   return (
     <div className="relative flex h-screen w-full bg-black text-white">
       {/* Left panel */}
-      <div className="w-80 border-r border-gray-800 flex flex-col" style={{ marginTop: 50 }}>
+      <div className="w-80 border-r border-gray-800 flex flex-col">
         {/* Brand + tabs */}
         <div className="border-b border-gray-800 px-4 pt-10 pb-0">
-          <div className="mb-4">
-            <h1 className="text-lg font-medium tracking-wide text-white">notes</h1>
-          </div>
+
           <div className="flex gap-0 p-4">
             <button
               onClick={() => setActiveTab("notes")}

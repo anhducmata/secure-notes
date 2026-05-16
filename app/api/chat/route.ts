@@ -7,18 +7,23 @@ import OpenAI from "openai"
 import { toFile } from "openai"
 import { CONVS_KEY, CONV_KEY } from "@/lib/chat-keys"
 
-const deepseek = new OpenAI({
-  apiKey: process.env.DEEPSEEK_API_KEY || "dummy-key",
-  baseURL: "https://api.deepseek.com",
-})
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "dummy-key" })
-
-function clientForModel(model: string) {
-  return model.startsWith("deepseek") ? deepseek : openai
+function getClient(provider: "openai" | "deepseek", reqHeaders: Headers) {
+  if (provider === "deepseek") {
+    return new OpenAI({
+      apiKey: reqHeaders.get("x-deepseek-key") || process.env.DEEPSEEK_API_KEY || "dummy-key",
+      baseURL: "https://api.deepseek.com",
+    });
+  }
+  return new OpenAI({
+    apiKey: reqHeaders.get("x-openai-key") || process.env.OPENAI_API_KEY || "dummy-key",
+  });
 }
 
-async function processAttachments(files: File[]): Promise<string> {
+function clientForModel(model: string, reqHeaders: Headers) {
+  return model.startsWith("deepseek") ? getClient("deepseek", reqHeaders) : getClient("openai", reqHeaders)
+}
+
+async function processAttachments(files: File[], reqHeaders: Headers): Promise<string> {
   if (files.length === 0) return ""
   const parts: string[] = []
 
@@ -31,7 +36,7 @@ async function processAttachments(files: File[]): Promise<string> {
         const arrayBuffer = await file.arrayBuffer()
         const buffer = Buffer.from(arrayBuffer)
         const openaiFile = await toFile(buffer, name, { type: mime })
-        const result = await openai.audio.transcriptions.create({
+        const result = await getClient("openai", reqHeaders).audio.transcriptions.create({
           file: openaiFile,
           model: "whisper-1",
         })
@@ -44,7 +49,7 @@ async function processAttachments(files: File[]): Promise<string> {
         const arrayBuffer = await file.arrayBuffer()
         const base64 = Buffer.from(arrayBuffer).toString("base64")
         const dataUrl = `data:${mime};base64,${base64}`
-        const result = await openai.chat.completions.create({
+        const result = await getClient("openai", reqHeaders).chat.completions.create({
           model: "gpt-5.5",
           messages: [
             {
@@ -92,14 +97,14 @@ async function getEntityStore(userId: string): Promise<EntityStore | null> {
 }
 
 /** Ask DeepSeek to decompose the question into targeted search queries + entity lookups */
-async function planRetrieval(question: string, conversationHistory: { role: string; content: string }[]): Promise<{
+async function planRetrieval(question: string, conversationHistory: { role: string; content: string }[], reqHeaders: Headers): Promise<{
   queries: string[]
   peopleToLookup: string[]
   projectsToLookup: string[]
   intent: string
 }> {
   const historySnippet = conversationHistory.slice(-4).map(m => `${m.role}: ${m.content}`).join("\n")
-  const response = await deepseek.chat.completions.create({
+  const response = await getClient("deepseek", reqHeaders).chat.completions.create({
     model: "deepseek-chat",
     temperature: 0,
     messages: [
@@ -250,10 +255,10 @@ export async function POST(req: NextRequest) {
     const cleanHistory = conversationHistory.map(({ role, content }) => ({ role, content }))
 
     // Process any attached files
-    const attachmentContext = await processAttachments(files)
+    const attachmentContext = await processAttachments(files, req.headers)
 
     // Step 1: Plan retrieval
-    const plan = await planRetrieval(question, cleanHistory)
+    const plan = await planRetrieval(question, cleanHistory, req.headers)
 
     // Step 2: Parallel — vector search + entity store lookup
     const [vectorResults, entityStore] = await Promise.all([
@@ -284,7 +289,7 @@ When you reference info from a note, cite inline like [1], [2], etc. Don't fabri
 ${attachmentContext ? `--- ATTACHED FILES ---\n${attachmentContext}\n\n` : ""}${entityContext ? `--- STRUCTURED KNOWLEDGE ---\n${entityContext}\n\n` : ""}${notesContext ? `--- RELEVANT NOTES ---\n${notesContext}` : "No relevant notes found — let the user know briefly."}`
 
     // Step 4: Answer (streaming)
-    const answerClient = clientForModel(selectedModel)
+    const answerClient = clientForModel(selectedModel, req.headers)
     const stream = await answerClient.chat.completions.create({
       model: selectedModel,
       stream: true,

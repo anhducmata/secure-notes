@@ -5,12 +5,17 @@ import { vectorIndex } from "@/lib/vector"
 import { ENTITY_KEY, emptyEntityStore, mergeEntities, type EntityStore } from "@/lib/entities"
 import OpenAI, { toFile } from "openai"
 
-const deepseek = new OpenAI({
-  apiKey: process.env.DEEPSEEK_API_KEY || "dummy-key",
-  baseURL: "https://api.deepseek.com",
-})
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "dummy-key" })
+function getClient(provider: "openai" | "deepseek", reqHeaders: Headers) {
+  if (provider === "deepseek") {
+    return new OpenAI({
+      apiKey: reqHeaders.get("x-deepseek-key") || process.env.DEEPSEEK_API_KEY || "dummy-key",
+      baseURL: "https://api.deepseek.com",
+    });
+  }
+  return new OpenAI({
+    apiKey: reqHeaders.get("x-openai-key") || process.env.OPENAI_API_KEY || "dummy-key",
+  });
+}
 
 interface NoteAttachmentInput {
   id: string
@@ -25,7 +30,8 @@ function attCacheKey(userId: string, attId: string) {
 
 async function extractAttachmentText(
   userId: string,
-  att: NoteAttachmentInput
+  att: NoteAttachmentInput,
+  reqHeaders: Headers
 ): Promise<string> {
   // Check cache first
   const cached = await redis.get(attCacheKey(userId, att.id))
@@ -42,10 +48,10 @@ async function extractAttachmentText(
   try {
     if (att.type === "audio") {
       const openaiFile = await toFile(buffer, att.name, { type: mime })
-      const result = await openai.audio.transcriptions.create({ file: openaiFile, model: "whisper-1" })
+      const result = await getClient("openai", reqHeaders).audio.transcriptions.create({ file: openaiFile, model: "whisper-1" })
       text = `[Audio: ${att.name}]\nTranscript: ${result.text}`
     } else if (att.type === "image") {
-      const result = await openai.chat.completions.create({
+      const result = await getClient("openai", reqHeaders).chat.completions.create({
         model: "gpt-5.5",
         messages: [{
           role: "user",
@@ -83,7 +89,8 @@ async function getAuthenticatedUserId(): Promise<string | null> {
 async function extractEntitiesFromNote(
   noteId: string,
   noteTitle: string,
-  content: string
+  content: string,
+  reqHeaders: Headers
 ): Promise<Partial<EntityStore>> {
   const prompt = `Extract structured knowledge entities from this note. Return ONLY valid JSON, no markdown.
 
@@ -124,7 +131,7 @@ Return this exact JSON structure (use empty objects/arrays if nothing found):
   ]
 }`
 
-  const response = await deepseek.chat.completions.create({
+  const response = await getClient("deepseek", reqHeaders).chat.completions.create({
     model: "deepseek-chat",
     messages: [{ role: "user", content: prompt }],
     temperature: 0,
@@ -168,7 +175,7 @@ export async function POST(req: NextRequest) {
         let attachmentText = ""
         if (note.attachments?.length) {
           const parts = await Promise.all(
-            note.attachments.map((att) => extractAttachmentText(userId, att))
+            note.attachments.map((att) => extractAttachmentText(userId, att, req.headers))
           )
           attachmentText = parts.filter(Boolean).join("\n\n")
         }
@@ -193,7 +200,7 @@ export async function POST(req: NextRequest) {
       id: n.id,
       title: n.title,
       content: [n.content, n.attachmentText].filter(Boolean).join("\n\n"),
-    }))).catch((err) =>
+    })), req.headers).catch((err) =>
       console.error("[/api/notes/index] entity extraction failed:", err)
     )
 
@@ -206,7 +213,8 @@ export async function POST(req: NextRequest) {
 
 async function extractAndStoreEntities(
   userId: string,
-  notes: { id: string; title: string; content: string }[]
+  notes: { id: string; title: string; content: string }[],
+  reqHeaders: Headers
 ) {
   const raw = await redis.get(ENTITY_KEY(userId))
   let store = raw
@@ -215,7 +223,7 @@ async function extractAndStoreEntities(
 
   for (const note of notes) {
     try {
-      const extracted = await extractEntitiesFromNote(note.id, note.title, note.content)
+      const extracted = await extractEntitiesFromNote(note.id, note.title, note.content, reqHeaders)
       store = mergeEntities(store, extracted, note.id, note.title)
     } catch (err) {
       console.error(`[entities] failed on note ${note.id}:`, err)

@@ -15,10 +15,7 @@
   "main": "electron/main.js",
   "build": {
     "appId": "com.mata.securenotes",
-    "productName": "Secure Notes",
-    "files": [
-      "electron/**/*"
-    ],
+    "productName": "SecureNotes",
     "mac": {
       "category": "public.app-category.productivity",
       "target": [
