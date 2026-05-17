@@ -32,6 +32,11 @@ jobs:
         run: pnpm install
 
       - name: Build Next.js
+        env:
+          UPSTASH_VECTOR_REST_URL: ${{ secrets.UPSTASH_VECTOR_REST_URL || 'dummy-url' }}
+          UPSTASH_VECTOR_REST_TOKEN: ${{ secrets.UPSTASH_VECTOR_REST_TOKEN || 'dummy-token' }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY || 'dummy-key' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'dummy-key' }}
         run: pnpm run build
 
       - name: Build and Publish Electron app
