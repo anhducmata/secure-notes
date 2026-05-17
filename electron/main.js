@@ -70,14 +70,14 @@ app.whenReady().then(async () => {
   if (process.env.NODE_ENV !== "development" && !PROD_URL) {
     const { createServer } = require("http")
     const next = require("next")
-    
+
     // Create an instance of the Next.js app
     const nextApp = next({ dev: false, dir: app.getAppPath() })
     const handle = nextApp.getRequestHandler()
-    
+
     await nextApp.prepare()
     const server = createServer((req, res) => handle(req, res))
-    
+
     server.listen(0, () => {
       const port = server.address().port
       PROD_URL = `http://localhost:${port}`
