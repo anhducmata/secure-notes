@@ -33,9 +33,18 @@ export interface EncryptedPayload {
   version: number // For future migration support
 }
 
+export interface NoteAttachment {
+  id: string
+  name: string
+  type: "image" | "text" | "audio"
+  size: number
+  dataUrl?: string
+}
+
 export interface DecryptedNote {
   title: string
   content: string
+  attachments?: NoteAttachment[]
 }
 
 // ─── Helper Functions ─────────────────────────────────────────────────────────
