@@ -6,11 +6,11 @@ import { ENTITY_KEY, emptyEntityStore, mergeEntities, type EntityStore } from "@
 import OpenAI, { toFile } from "openai"
 
 const deepseek = new OpenAI({
-  apiKey: process.env.DEEPSEEK_API_KEY,
+  apiKey: process.env.DEEPSEEK_API_KEY || "dummy-key",
   baseURL: "https://api.deepseek.com",
 })
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "dummy-key" })
 
 interface NoteAttachmentInput {
   id: string

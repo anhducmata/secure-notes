@@ -8,11 +8,11 @@ import { toFile } from "openai"
 import { CONVS_KEY, CONV_KEY } from "@/lib/chat-keys"
 
 const deepseek = new OpenAI({
-  apiKey: process.env.DEEPSEEK_API_KEY,
+  apiKey: process.env.DEEPSEEK_API_KEY || "dummy-key",
   baseURL: "https://api.deepseek.com",
 })
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "dummy-key" })
 
 function clientForModel(model: string) {
   return model.startsWith("deepseek") ? deepseek : openai
