@@ -28,3 +28,7 @@ next-env.d.ts
 
 # package manager lock files (project uses pnpm-lock.yaml)
 package-lock.json
+
+# Local dev storage
+.local-redis.json
+.local-notes/

@@ -1,7 +1,34 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { X, Shield, Key, ChevronRight, Check, AlertCircle, Lock, Server, Eye, Github } from "lucide-react"
+import { X, Shield, Key, ChevronRight, Check, AlertCircle, Lock, Server, Eye, EyeOff, Github, Mic } from "lucide-react"
+
+const SONIOX_API_KEY_STORAGE = "soniox_api_key"
+const SILENCE_TIMEOUT_STORAGE = "voice_silence_timeout"
+const DEFAULT_SILENCE_TIMEOUT = 30
+
+export function getSonioxApiKey(): string {
+  if (typeof window === "undefined") return ""
+  return (
+    localStorage.getItem(SONIOX_API_KEY_STORAGE) ||
+    process.env.NEXT_PUBLIC_SONIOX_API_KEY ||
+    ""
+  )
+}
+
+export function getSilenceTimeout(): number {
+  if (typeof window === "undefined") return DEFAULT_SILENCE_TIMEOUT
+  const v = parseInt(localStorage.getItem(SILENCE_TIMEOUT_STORAGE) || "", 10)
+  return isNaN(v) || v < 5 ? DEFAULT_SILENCE_TIMEOUT : v
+}
+
+function setSonioxApiKey(key: string) {
+  if (key.trim()) {
+    localStorage.setItem(SONIOX_API_KEY_STORAGE, key.trim())
+  } else {
+    localStorage.removeItem(SONIOX_API_KEY_STORAGE)
+  }
+}
 
 const GITHUB_URL = process.env.NEXT_PUBLIC_GITHUB_URL ?? "https://github.com/anhducmata/secure-notes"
 const COMMIT_SHA = process.env.NEXT_PUBLIC_COMMIT_SHA ?? "unknown"
@@ -22,9 +49,18 @@ export function SettingsModal({ isOpen, onClose, user, onPinSet, hasPin, onPinRe
   const [pinStep, setPinStep] = useState<"create" | "confirm">("create")
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [sonioxKey, setSonioxKey] = useState("")
+  const [showSonioxKey, setShowSonioxKey] = useState(false)
+  const [sonioxSaved, setSonioxSaved] = useState(false)
+  const [silenceTimeout, setSilenceTimeout] = useState(DEFAULT_SILENCE_TIMEOUT)
 
   useEffect(() => {
-    if (!isOpen) {
+    if (isOpen) {
+      setSonioxKey(getSonioxApiKey())
+      setSonioxSaved(false)
+      setShowSonioxKey(false)
+      setSilenceTimeout(getSilenceTimeout())
+    } else {
       setView("main")
       setPin(["", "", "", "", "", ""])
       setConfirmPin(["", "", "", "", "", ""])
@@ -33,6 +69,13 @@ export function SettingsModal({ isOpen, onClose, user, onPinSet, hasPin, onPinRe
       setSuccess(null)
     }
   }, [isOpen])
+
+  const handleSonioxSave = () => {
+    setSonioxApiKey(sonioxKey)
+    localStorage.setItem(SILENCE_TIMEOUT_STORAGE, String(silenceTimeout))
+    setSonioxSaved(true)
+    setTimeout(() => setSonioxSaved(false), 2000)
+  }
 
   if (!isOpen) return null
 
@@ -157,6 +200,79 @@ export function SettingsModal({ isOpen, onClose, user, onPinSet, hasPin, onPinRe
           </div>
           <ChevronRight className="h-4 w-4" style={{ color: "rgba(255,255,255,0.3)" }} />
         </button>
+
+        {/* Voice Transcription API Key */}
+        <div
+          className="rounded-xl px-4 py-3.5 space-y-3"
+          style={{ background: "rgba(255,255,255,0.06)" }}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+              style={{ background: "rgba(234,179,8,0.12)" }}
+            >
+              <Mic className="h-4 w-4 text-yellow-500" />
+            </div>
+            <div className="flex-1 text-left">
+              <p className="text-sm font-medium text-white">Voice Transcription</p>
+              <p className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
+                Soniox API key for real-time transcription
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <input
+                type={showSonioxKey ? "text" : "password"}
+                value={sonioxKey}
+                onChange={(e) => setSonioxKey(e.target.value)}
+                placeholder="Paste API key…"
+                className="w-full rounded-lg px-3 py-2 pr-9 text-xs text-white focus:outline-none focus:ring-1 focus:ring-yellow-500 font-mono"
+                style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}
+                autoComplete="off"
+                spellCheck={false}
+                data-1p-ignore="true"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSonioxKey((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2"
+                style={{ color: "rgba(255,255,255,0.35)" }}
+                aria-label={showSonioxKey ? "Hide key" : "Show key"}
+              >
+                {showSonioxKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            <button
+              onClick={handleSonioxSave}
+              className="shrink-0 rounded-lg px-3 py-2 text-xs font-medium transition-colors"
+              style={{
+                background: sonioxSaved ? "rgba(34,197,94,0.15)" : "rgba(234,179,8,0.15)",
+                color: sonioxSaved ? "rgb(74,222,128)" : "rgb(234,179,8)",
+              }}
+            >
+              {sonioxSaved ? <Check className="h-3.5 w-3.5" /> : "Save"}
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs shrink-0" style={{ color: "rgba(255,255,255,0.4)" }}>
+              Auto-stop after silence
+            </span>
+            <input
+              type="number"
+              min={5}
+              max={300}
+              value={silenceTimeout}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10)
+                if (!isNaN(v)) setSilenceTimeout(v)
+              }}
+              className="w-16 rounded-lg px-2 py-1 text-xs text-white text-center focus:outline-none focus:ring-1 focus:ring-yellow-500 font-mono"
+              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.1)" }}
+            />
+            <span className="text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>sec</span>
+          </div>
+        </div>
 
         {/* Security Info */}
         <button

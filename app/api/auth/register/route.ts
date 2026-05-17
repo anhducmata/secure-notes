@@ -4,7 +4,7 @@ import { Resend } from "resend"
 import bcrypt from "bcryptjs"
 import crypto from "crypto"
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null
 
 const BCRYPT_SALT_ROUNDS = 12
 
@@ -39,17 +39,26 @@ export async function POST(request: Request) {
     // Hash password with bcrypt
     const hashedPassword = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS)
 
-    // Store pending user (not verified yet)
+    const isLocalDev = !process.env.KV_REST_API_URL
+
+    // In local dev: auto-verify users (no email needed)
     const userData = {
       email: email.toLowerCase(),
       name,
       password: hashedPassword,
-      verified: false,
+      verified: isLocalDev ? true : false,
       createdAt: Date.now(),
     }
 
     // Store user data
     await redis.hset("users", { [email.toLowerCase()]: JSON.stringify(userData) })
+
+    if (isLocalDev) {
+      return NextResponse.json({
+        success: true,
+        message: "Account created (local dev — no email verification needed). You can sign in now.",
+      })
+    }
 
     // Store verification token
     await redis.set(`verify:${verificationToken}`, email.toLowerCase(), { ex: 86400 }) // 24h expiry
@@ -60,7 +69,7 @@ export async function POST(request: Request) {
     const verifyUrl = `${baseUrl}/api/auth/verify?token=${verificationToken}`
 
     try {
-      await resend.emails.send({
+      await resend!.emails.send({
         from: "Notes App <onboarding@freenotes.space>",
         to: email,
         subject: "Verify your email address",

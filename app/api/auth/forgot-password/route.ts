@@ -3,7 +3,7 @@ import { redis } from "@/lib/redis"
 import { Resend } from "resend"
 import crypto from "crypto"
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null
 
 function generateToken(): string {
   return crypto.randomBytes(32).toString("hex")

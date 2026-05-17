@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import useSWR from "swr"
-import { Plus, Search, ChevronLeft, Lock, Share2, Trash2 } from "lucide-react"
+import { Plus, Search, ChevronLeft, Lock, Share2, Trash2, Brain } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
+import { AiChatModal } from "@/components/ai-chat-modal"
 import { AvatarButton } from "@/components/avatar-button"
-import { SettingsModal } from "@/components/settings-modal"
+import { SettingsModal, getSonioxApiKey, getSilenceTimeout } from "@/components/settings-modal"
 import { PinLoginModal, storePinData, getPinData, removePinData } from "@/components/pin-login-modal"
 import {
   encryptNote,
@@ -14,6 +15,7 @@ import {
   type DecryptedNote,
 } from "@/lib/crypto"
 import { ShareModal } from "@/components/share-modal"
+import { VoiceRecorder } from "@/components/voice-recorder"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,10 +74,16 @@ export function NotesApp() {
   const [selectedNote, setSelectedNote] = useState<DecryptedNoteWithMeta | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [isMobile, setIsMobile] = useState(false)
+  const [aiChatOpen, setAiChatOpen] = useState(false)
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle") // Keep for auto-save logic
   const [pendingChanges, setPendingChanges] = useState<DecryptedNoteWithMeta | null>(null)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [limitError, setLimitError] = useState<string | null>(null)
+  const [sonioxApiKey, setSonioxApiKey] = useState("")
+  const [silenceTimeoutSec] = useState(() => getSilenceTimeout())
+
+  // Snapshot of note content when recording starts — transcription appends to this
+  const recordingBaseContentRef = useRef<string>("")
 
   // Encryption key derived from user's password (set during login)
   const encryptionPassword = user?.encryptionKey || ""
@@ -255,6 +263,11 @@ export function NotesApp() {
     return () => window.removeEventListener("resize", check)
   }, [])
 
+  // Load Soniox API key from localStorage
+  useEffect(() => {
+    setSonioxApiKey(getSonioxApiKey())
+  }, [])
+
   const formatDate = (date: Date) => {
     const today = new Date()
     const yesterday = new Date(today)
@@ -373,6 +386,39 @@ export function NotesApp() {
     }
   }
 
+  // Voice recorder handlers
+  const handleRecordingStart = useCallback(() => {
+    recordingBaseContentRef.current = selectedNote?.content ?? ""
+    // Refresh API key from storage each time recording starts (user may have updated it)
+    setSonioxApiKey(getSonioxApiKey())
+
+    // Auto-title new notes with recording timestamp
+    if (selectedNote && selectedNote.title === "New Note") {
+      const now = new Date()
+      const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })
+      const title = `Recorded on ${dateStr} ${timeStr}`
+      const updated = { ...selectedNote, title, date: now }
+      setSelectedNote(updated)
+      setPendingChanges(updated)
+    }
+  }, [selectedNote])
+
+  const handleRecordingStop = useCallback(() => {
+    // nothing extra needed — transcript already committed
+  }, [])
+
+  const handleTranscriptUpdate = useCallback((transcript: string) => {
+    if (!selectedNote) return
+    const base = recordingBaseContentRef.current
+    const separator = base && !base.endsWith("\n") ? "\n\n" : ""
+    const newContent = base + separator + transcript
+    if (newContent.length > MAX_CONTENT_LENGTH) return
+    const updated = { ...selectedNote, content: newContent }
+    setSelectedNote(updated)
+    setPendingChanges(updated)
+  }, [selectedNote])
+
   // Sign out handler
   const handleSignOut = async () => {
     try {
@@ -482,6 +528,13 @@ export function NotesApp() {
                   Notes
                 </button>
                 <div className="flex items-center gap-1">
+                  <VoiceRecorder
+                    apiKey={sonioxApiKey}
+                    silenceTimeoutSec={silenceTimeoutSec}
+                    onTranscriptUpdate={handleTranscriptUpdate}
+                    onRecordingStart={handleRecordingStart}
+                    onRecordingStop={handleRecordingStop}
+                  />
                   <button
                     onClick={() => setShareModalOpen(true)}
                     className="p-2 rounded-lg text-gray-400 hover:text-yellow-500 hover:bg-zinc-800 transition-colors"
@@ -489,9 +542,9 @@ export function NotesApp() {
                   >
                     <Share2 className="h-4 w-4" />
                   </button>
-                  <button 
-                    onClick={handleDeleteNote} 
-                    className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-zinc-800 transition-colors" 
+                  <button
+                    onClick={handleDeleteNote}
+                    className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-zinc-800 transition-colors"
                     aria-label="Delete note"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -533,16 +586,25 @@ export function NotesApp() {
           <div className="flex h-full flex-col">
             <div className="border-b border-gray-800 p-4">
               <h1 className="text-xl font-semibold text-yellow-500 mb-4">Notes</h1>
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search"
-                  className="w-full rounded-md bg-zinc-800 py-2 pl-8 pr-4 text-sm text-white placeholder-gray-400 focus:outline-none"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  autoComplete="off"
-                />
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search"
+                    className="w-full rounded-md bg-zinc-800 py-2 pl-8 pr-4 text-sm text-white placeholder-gray-400 focus:outline-none"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    autoComplete="off"
+                  />
+                </div>
+                <button
+                  onClick={() => setAiChatOpen(true)}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-gray-400 hover:text-yellow-500 hover:bg-zinc-700 transition-colors shadow-sm"
+                  aria-label="Open AI Chat"
+                >
+                  <Brain className="h-4 w-4" />
+                </button>
               </div>
             </div>
             <div className="flex h-12 items-center justify-between border-b border-gray-800 px-4">
@@ -590,6 +652,11 @@ export function NotesApp() {
           noteTitle={selectedNote?.title || ""}
           noteContent={selectedNote?.content || ""}
         />
+        <AiChatModal
+          isOpen={aiChatOpen}
+          onClose={() => setAiChatOpen(false)}
+          notes={localNotes.map(n => ({ title: n.title, content: n.content }))}
+        />
       </div>
     )
   }
@@ -601,16 +668,25 @@ export function NotesApp() {
       <div className="w-80 border-r border-gray-800 flex flex-col">
         <div className="border-b border-gray-800 p-6">
           <h1 className="text-xl font-semibold text-yellow-500 mb-4">Notes</h1>
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search"
-              className="w-full rounded-md bg-zinc-800 py-2 pl-8 pr-4 text-sm text-white placeholder-gray-400 focus:outline-none"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              autoComplete="off"
-            />
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search"
+                className="w-full rounded-md bg-zinc-800 py-2 pl-8 pr-4 text-sm text-white placeholder-gray-400 focus:outline-none"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+            <button
+              onClick={() => setAiChatOpen(true)}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-gray-400 hover:text-yellow-500 hover:bg-zinc-700 transition-colors shadow-sm"
+              aria-label="Open AI Chat"
+            >
+              <Brain className="h-4 w-4" />
+            </button>
           </div>
         </div>
 
@@ -661,6 +737,13 @@ export function NotesApp() {
                   onChange={(e) => handleTitleChange(e.target.value)}
                 />
                 <div className="flex items-center gap-1 ml-4">
+                  <VoiceRecorder
+                    apiKey={sonioxApiKey}
+                    silenceTimeoutSec={silenceTimeoutSec}
+                    onTranscriptUpdate={handleTranscriptUpdate}
+                    onRecordingStart={handleRecordingStart}
+                    onRecordingStop={handleRecordingStop}
+                  />
                   <button
                     onClick={() => setShareModalOpen(true)}
                     className="p-2 rounded-lg text-gray-400 hover:text-yellow-500 hover:bg-zinc-800 transition-colors"
@@ -733,6 +816,11 @@ export function NotesApp() {
         onClose={() => setShareModalOpen(false)}
         noteTitle={selectedNote?.title || ""}
         noteContent={selectedNote?.content || ""}
+      />
+      <AiChatModal
+        isOpen={aiChatOpen}
+        onClose={() => setAiChatOpen(false)}
+        notes={localNotes.map(n => ({ title: n.title, content: n.content }))}
       />
     </div>
   )
