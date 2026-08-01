@@ -2,6 +2,18 @@ import Foundation
 import Testing
 @testable import SecureNotesAppleCore
 
+@Test func transcriptAssemblerFlushesSpeakerTaggedLines() async throws {
+    let assembler = TranscriptAssembler()
+    _ = await assembler.consume(SonioxResponse(tokens: [
+        SonioxToken(text: "hello", isFinal: true),
+        SonioxToken(text: " there", isFinal: true),
+    ]))
+    let transcript = await assembler.flush()
+
+    #expect(transcript.renderedText == "You: hello there")
+}
+
+#if canImport(CryptoKit) && canImport(CommonCrypto)
 @Test func encryptsAndDecryptsNotes() throws {
     let note = SecureNote(
         title: "Daily standup",
@@ -33,6 +45,7 @@ import Testing
     #expect(loaded[0].title == "Apple build")
     #expect(loaded[0].content == "Ship Swift version")
 }
+#endif
 
 @Test func schedulesBackgroundJobs() async throws {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())

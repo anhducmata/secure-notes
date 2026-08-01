@@ -21,6 +21,19 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
+## Apple client
+
+A native Swift Apple client scaffold lives at `/home/runner/work/secure-notes/secure-notes/apple/SecureNotesApple`.
+
+Run its tests with:
+
+```bash
+cd apple/SecureNotesApple
+swift test
+```
+
+Open `Package.swift` in Xcode to wire `SecureNotesAppleCore` into an iOS or macOS app target.
+
 ## Screenshots
 Main screen
 <img width="1172" height="621" alt="image" src="https://github.com/user-attachments/assets/01209456-645d-43df-801a-ed8f09d72166" />
