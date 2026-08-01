@@ -11,16 +11,8 @@ let package = Package(
             targets: ["SecureNotesAppleCore"]
         ),
     ],
-    dependencies: [
-        .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.1"),
-    ],
     targets: [
-        .target(
-            name: "SecureNotesAppleCore",
-            dependencies: [
-                .product(name: "Crypto", package: "swift-crypto"),
-            ]
-        ),
+        .target(name: "SecureNotesAppleCore"),
         .testTarget(
             name: "SecureNotesAppleTests",
             dependencies: ["SecureNotesAppleCore"]

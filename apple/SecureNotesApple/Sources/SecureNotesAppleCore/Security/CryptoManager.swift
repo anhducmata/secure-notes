@@ -1,11 +1,15 @@
-import Crypto
 import Foundation
 
 public enum CryptoManagerError: Error, Equatable {
     case invalidBase64
     case invalidCiphertext
     case invalidPayload
+    case unsupportedPlatform
 }
+
+#if canImport(CryptoKit) && canImport(CommonCrypto)
+import CommonCrypto
+import CryptoKit
 
 public enum CryptoManager {
     public static let pbkdf2Iterations = 100_000
@@ -58,46 +62,59 @@ public enum CryptoManager {
     }
 
     public static func deriveKey(password: String, salt: Data) throws -> Data {
-        let passwordData = Data(password.utf8)
-        let passwordKey = SymmetricKey(data: passwordData)
-        let blockCount = Int(ceil(Double(keyLength) / Double(SHA256.byteCount)))
-        var derived = Data()
-        derived.reserveCapacity(keyLength)
-
-        for blockIndex in 1...blockCount {
-            var blockInput = salt
-            blockInput.append(blockIndex.bigEndianBytes)
-
-            var u = Data(HMAC<SHA256>.authenticationCode(for: blockInput, using: passwordKey))
-            var t = u
-
-            if pbkdf2Iterations > 1 {
-                for _ in 2...pbkdf2Iterations {
-                    u = Data(HMAC<SHA256>.authenticationCode(for: u, using: passwordKey))
-                    xor(into: &t, with: u)
-                }
+        var derivedKey = Data(repeating: 0, count: keyLength)
+        let status = derivedKey.withUnsafeMutableBytes { derivedBytes in
+            salt.withUnsafeBytes { saltBytes in
+                CCKeyDerivationPBKDF(
+                    CCPBKDFAlgorithm(kCCPBKDF2),
+                    password,
+                    password.utf8.count,
+                    saltBytes.bindMemory(to: UInt8.self).baseAddress,
+                    salt.count,
+                    CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256),
+                    UInt32(pbkdf2Iterations),
+                    derivedBytes.bindMemory(to: UInt8.self).baseAddress,
+                    keyLength
+                )
             }
-
-            derived.append(t)
         }
 
-        return derived.prefix(keyLength)
+        guard status == kCCSuccess else {
+            throw CryptoManagerError.invalidPayload
+        }
+
+        return derivedKey
     }
 
     private static func randomBytes(count: Int) -> Data {
         Data((0..<count).map { _ in UInt8.random(in: .min ... .max) })
     }
+}
+#else
+public enum CryptoManager {
+    public static let pbkdf2Iterations = 100_000
+    public static let saltLength = 16
+    public static let ivLength = 12
+    public static let keyLength = 32
 
-    private static func xor(into lhs: inout Data, with rhs: Data) {
-        for index in lhs.indices {
-            lhs[index] ^= rhs[index]
-        }
+    public static func encrypt(note: SecureNote, password: String) throws -> EncryptedNotePayload {
+        throw CryptoManagerError.unsupportedPlatform
+    }
+
+    public static func decrypt(payload: EncryptedNotePayload, password: String) throws -> SecureNote {
+        throw CryptoManagerError.unsupportedPlatform
+    }
+
+    public static func encrypt(data: Data, password: String) throws -> EncryptedNotePayload {
+        throw CryptoManagerError.unsupportedPlatform
+    }
+
+    public static func decrypt(payload: EncryptedNotePayload, password: String) throws -> Data {
+        throw CryptoManagerError.unsupportedPlatform
+    }
+
+    public static func deriveKey(password: String, salt: Data) throws -> Data {
+        throw CryptoManagerError.unsupportedPlatform
     }
 }
-
-private extension Int {
-    var bigEndianBytes: Data {
-        var value = UInt32(self).bigEndian
-        return withUnsafeBytes(of: &value) { Data($0) }
-    }
-}
+#endif

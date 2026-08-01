@@ -170,7 +170,7 @@ public actor TranscriptAssembler {
         }
 
         if response.endpoint {
-            flush()
+            _ = flush()
         }
 
         return TranscriptDocument(lines: lines)
