@@ -76,72 +76,26 @@ export interface Attachment {
 }
 
 // ── Sample data ────────────────────────────────────────────────────────────
-const SAMPLE_ATTACHMENTS: Attachment[] = [
-  { id: 'a1', name: 'Q3_strategy_deck.pdf', type: 'document', size: '2.4 MB', url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf' },
-  { id: 'a2', name: 'user_interview_recording.m4a', type: 'audio', size: '18.7 MB', url: 'https://actions.google.com/sounds/v1/ambiences/rain_heavy.ogg' },
-  { id: 'a3', name: 'whiteboard_photo.jpg', type: 'image', size: '1.1 MB', url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80' },
-]
+const SAMPLE_ATTACHMENTS: Attachment[] = []
 
 const SAMPLE_NOTES: Note[] = [
   {
     id: '1',
-    title: 'Product strategy Q3',
-    body: '<h2>Product strategy Q3</h2><p>We need to re-evaluate our positioning in the mid-market segment. The core insight from the last customer interviews is that users don\'t primarily want speed — they want <strong>confidence</strong>.</p><p><strong contenteditable="false" style="color: #2563eb; margin-right: 4px; user-select: none;">You (Mata):</strong> <span style="font-size: 12px; color: #888; margin-right: 6px;">[0:00 - 0:04]</span>So the main concern I have with the current approach is that we\'re optimizing for the wrong metric.</p><p><strong contenteditable="false" style="color: #059669; margin-right: 4px; user-select: none;">Orange Fog 🍊:</strong> <span style="font-size: 12px; color: #888; margin-right: 6px;">[0:04 - 0:08]</span>Engineering team confirmed PgBouncer connection pooler deployment is complete.</p>',
+    title: 'Welcome to your Workspace',
+    body: '<h2>Welcome to your Workspace</h2><p>This is your clean personal note space. Type <strong>#</strong> to tag topics, <strong>@</strong> to tag speakers, or drag & drop files to attach!</p><p>Use the <strong>Record</strong> button at the bottom left to record live meetings and voice transcription.</p>',
     updatedAt: new Date(),
-    emoji: '📋',
+    emoji: '✨',
     category: 'Meeting',
-    attachments: [SAMPLE_ATTACHMENTS[0], SAMPLE_ATTACHMENTS[1]],
-  },
-  {
-    id: '2',
-    title: 'Design system audit',
-    body: '<h2>Design system audit</h2><p>The current component library has grown organically. We have three different button variants that all do slightly different things, four shades of gray that aren\'t in the token system.</p><ol><li>Consolidate button variants to primary, secondary, ghost</li><li>Lock the gray scale to 6 steps</li><li>Unify the modal/dialog pattern under a single component</li></ol>',
-    updatedAt: new Date(Date.now() - 86400000),
-    emoji: '🎨',
-    category: 'Brainstorming',
-    attachments: [SAMPLE_ATTACHMENTS[2]],
-  },
-  {
-    id: '3',
-    title: 'Meeting — eng sync',
-    body: '<h2>Meeting — eng sync</h2><p><em>July 22, 2026 · 10:00 AM</em></p><p><strong contenteditable="false" style="color: #2563eb; margin-right: 4px; user-select: none;">You (Mata):</strong> <span style="font-size: 12px; color: #888; margin-right: 6px;">[0:00 - 0:05]</span>We aligned on shipping the search indexing fix before the transcription feature.</p><p><strong contenteditable="false" style="color: #059669; margin-right: 4px; user-select: none;">Orange Fog 🍊:</strong> <span style="font-size: 12px; color: #888; margin-right: 6px;">[0:05 - 0:10]</span>Dev flagged Postgres connection pool resolution under high concurrency.</p>',
-    updatedAt: new Date(Date.now() - 86400000 * 2),
-    emoji: '🗣️',
-    category: 'Standup',
-  },
-  {
-    id: '4',
-    title: 'Sprint planning notes',
-    body: '<h2>Sprint planning notes</h2><p>Capacity this sprint is 34 points across the team. Priorities: finish auth flow, close the 3 critical bugs from last sprint, and get the onboarding modal into QA.</p>',
-    updatedAt: new Date(Date.now() - 86400000 * 4),
-    emoji: '🗂️',
-    category: '1-on-1',
-  },
-  {
-    id: '5',
-    title: 'Reading notes — Thinking Fast and Slow',
-    body: '<h2>Thinking Fast and Slow</h2><p><em>Kahneman, 2011</em></p><p>System 1 operates automatically and quickly, with little or no effort. System 2 allocates attention to effortful mental activities.</p><blockquote>"The confidence people have in their beliefs is not a measure of the quality of evidence."</blockquote>',
-    updatedAt: new Date(Date.now() - 86400000 * 9),
-    emoji: '📚',
-    category: 'Brainstorming',
-  },
-  {
-    id: '6',
-    title: 'User research synthesis',
-    body: '<h2>User research synthesis</h2><p>Conducted 8 interviews with mid-market users. Common themes: trust, reliability, and speed of getting started. Most pain points cluster around day 1–3 of the product experience.</p>',
-    updatedAt: new Date(Date.now() - 86400000 * 16),
-    emoji: '🔬',
-    category: 'Customer Interview',
-  },
+    tags: ['#welcome', '#workspace'],
+    attachments: [],
+  }
 ]
 
 
 
 const TRANSCRIPT_SEGMENTS: { text: string; source: 'mic' | 'system'; defaultVoice: string }[] = [
-  { text: "So the main concern I have with the current product approach is that we're optimizing heavily for short-term retention rather than long-term customer value.", source: "mic", defaultVoice: "You" },
-  { text: "We agreed in yesterday's sync call to track user retention after 60 days because users who reach the aha moment within their first 3 sessions show a 40% higher lifetime value.", source: "system", defaultVoice: "Orange Fog 🍊" },
-  { text: "Engineering confirmed the PgBouncer connection pooler deployment is successfully complete, so I'd recommend we restructure our onboarding flow to front-load core value demonstration.", source: "mic", defaultVoice: "You" },
-  { text: "During customer interviews, several enterprise leads emphasized that data security and audit trail compliance are non-negotiable requirements before wider team rollout.", source: "system", defaultVoice: "Blue Bird 🐦" },
+  { text: "Live voice recording session active. Speech recognition is capturing audio in real time.", source: "mic", defaultVoice: "You" },
+  { text: "Soniox AI and Web Speech API ready for real-time transcription.", source: "system", defaultVoice: "System Audio 🔊" },
 ]
 
 const AGENT_REPLIES = [
@@ -787,10 +741,11 @@ function KnowledgeGraphPage({
         data: { label: `${n.emoji} ${n.title}`, type: 'note', color: n.id === activeId ? '#818cf8' : '#64748B' },
       })
 
-      if (n.body.toLowerCase().includes('pgbouncer') || n.body.toLowerCase().includes('scale')) topicSet.add('#pgbouncer-infra')
-      if (n.body.toLowerCase().includes('retention') || n.body.includes('LTV')) topicSet.add('#retention-rate')
-      if (n.body.toLowerCase().includes('onboarding') || n.body.includes('positioning')) topicSet.add('#user-onboarding')
-      if (n.body.toLowerCase().includes('design') || n.body.includes('button')) topicSet.add('#design-system')
+      if (Array.isArray(n.tags)) {
+        n.tags.forEach(t => topicSet.add(t))
+      } else if (n.category) {
+        topicSet.add(`#${n.category.toLowerCase().replace(/\s+/g, '-')}`)
+      }
     })
 
     // 2. Teams Entities
