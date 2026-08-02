@@ -2099,12 +2099,38 @@ function Editor({ note, onChange, onDelete, showChat, onToggleChat, speakerNames
     const target = isMic ? 'mic' : 'system'
     setPlayingSpeaker(target)
 
+    // Extract actual spoken line by this speaker from note body HTML
+    let sampleText = ''
+    if (editorRef.current) {
+      const cleanHtml = editorRef.current.innerHTML
+      const cleanLabel = label.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+      const regex = new RegExp(`<strong[^>]*>\\s*${cleanLabel}:?\\s*<\\/strong>([\\s\\S]*?)(?:<\\/p>|<br|$)`, 'i')
+      const match = cleanHtml.match(regex)
+      if (match && match[1]) {
+        sampleText = stripHtml(match[1]).trim()
+      }
+    }
+
+    if (!sampleText && note.body) {
+      const cleanLabel = label.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+      const regex = new RegExp(`<strong[^>]*>\\s*${cleanLabel}:?\\s*<\\/strong>([\\s\\S]*?)(?:<\\/p>|<br|$)`, 'i')
+      const match = note.body.match(regex)
+      if (match && match[1]) {
+        sampleText = stripHtml(match[1]).trim()
+      }
+    }
+
+    if (!sampleText) {
+      sampleText = isMic
+        ? `Speech recorded by ${label}. Voice input captured from microphone.`
+        : `Real voice audio sample recorded by ${label}.`
+    }
+
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel()
-      const text = `Voice audio sample for ${label}. Soniox AI diarization active.`
-      const utterance = new SpeechSynthesisUtterance(text)
+      const utterance = new SpeechSynthesisUtterance(sampleText)
       utterance.rate = 1.0
-      utterance.pitch = isMic ? 1.25 : 0.85
+      utterance.pitch = isMic ? 1.15 : 0.95
       utterance.onend = () => setPlayingSpeaker(null)
       utterance.onerror = () => setPlayingSpeaker(null)
       window.speechSynthesis.speak(utterance)
