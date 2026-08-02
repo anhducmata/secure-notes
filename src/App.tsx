@@ -2624,16 +2624,18 @@ function Editor({ note, onChange, onDelete, showChat, onToggleChat, speakerNames
                 </div>
               </div>
 
-              <div>
-                <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 4 }}>Detected Topics</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {['#retention', '#pgbouncer', '#onboarding-value', '#ltv-metric'].map(tag => (
-                    <span key={tag} style={{ fontSize: 10, fontFamily: 'monospace', background: 'var(--color-accent-light)', color: 'var(--color-accent)', padding: '2px 6px', borderRadius: 4, fontWeight: 500 }}>
-                      {tag}
-                    </span>
-                  ))}
+              {Array.isArray(note.tags) && note.tags.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 4 }}>Detected Topics</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {note.tags.map(tag => (
+                      <span key={tag} style={{ fontSize: 10, fontFamily: 'monospace', background: 'var(--color-accent-light)', color: 'var(--color-accent)', padding: '2px 6px', borderRadius: 4, fontWeight: 500 }}>
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         )}
