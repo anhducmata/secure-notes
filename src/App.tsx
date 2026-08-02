@@ -765,13 +765,10 @@ function KnowledgeGraphPage({
     projects.forEach(p => list.push({ id: p.id, type: 'knowledgeNode', position: { x: p.x, y: p.y }, data: { label: p.label, type: 'project' } }))
 
     // 4. People / Team & Client Entities
-    const people = [
-      { id: 'person-1', label: '👤 Mata (Head of Product)', type: 'person', x: 50, y: 640 },
-      { id: 'person-2', label: '👤 Orange Fog 🍊 (Tech Lead)', type: 'person', x: 340, y: 640 },
-      { id: 'person-3', label: '👤 Sarah (Senior Designer)', type: 'person', x: 630, y: 640 },
-      { id: 'person-4', label: '👤 Alex (Enterprise Client)', type: 'person', x: 920, y: 640 },
+    const peopleList = [
+      { id: 'person-you', label: '👤 You (Owner)', type: 'person', x: 50, y: 640 },
     ]
-    people.forEach(p => list.push({ id: p.id, type: 'knowledgeNode', position: { x: p.x, y: p.y }, data: { label: p.label, type: 'person' } }))
+    peopleList.forEach(p => list.push({ id: p.id, type: 'knowledgeNode', position: { x: p.x, y: p.y }, data: { label: p.label, type: 'person' } }))
 
     // 5. Topic & Technology Entities
     Array.from(topicSet).forEach((t, idx) => {
@@ -797,11 +794,7 @@ function KnowledgeGraphPage({
   // Compute initial React Flow Edges establishing organizational & product relationships
   const initialEdges = useMemo(() => [
     // Organizational Management & Team Membership
-    { id: 'e-mg-1', source: 'person-2', target: 'person-1', label: 'is_managed_by', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
-    { id: 'e-mg-2', source: 'person-3', target: 'person-1', label: 'is_managed_by', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
-    { id: 'e-tm-1', source: 'person-1', target: 'team-1', label: 'belongs_to_team', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
-    { id: 'e-tm-2', source: 'person-2', target: 'team-2', label: 'belongs_to_team', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
-    { id: 'e-tm-3', source: 'person-3', target: 'team-1', label: 'belongs_to_team', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
+    { id: 'e-tm-1', source: 'person-you', target: 'team-1', label: 'belongs_to_team', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
 
     // Teams to Projects Ownership
     { id: 'e-tp-1', source: 'team-1', target: 'proj-2', label: 'owns_project', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
@@ -811,17 +804,11 @@ function KnowledgeGraphPage({
     { id: 'e-p3-p2', source: 'proj-3', target: 'proj-2', label: 'blocks_project', animated: true, style: { stroke: '#ef4444', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#7f1d1d', rx: 4, ry: 4, stroke: '#ef4444', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ef4444' } },
 
     // People to Projects
-    { id: 'e-pe1-p2', source: 'person-1', target: 'proj-2', label: 'leads_project', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
-    { id: 'e-pe2-p3', source: 'person-2', target: 'proj-3', label: 'architects', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
-    { id: 'e-pe4-p2', source: 'person-4', target: 'proj-2', label: 'cites_painpoint', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
+    { id: 'e-pe1-p2', source: 'person-you', target: 'proj-2', label: 'leads_project', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
 
     // Projects to Metrics
     { id: 'e-p2-m1', source: 'proj-2', target: 'metric-1', label: 'drives_metric', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
     { id: 'e-p1-m3', source: 'proj-1', target: 'metric-3', label: 'optimizes_metric', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
-
-    // Notes to Projects & Topics
-    { id: 'e-n1-p1', source: notes[0]?.id || '1', target: 'proj-2', label: 'belongs_to_project', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
-    { id: 'e-n1-t1', source: notes[0]?.id || '1', target: '#retention-rate', label: 'focuses_on', animated: true, style: { stroke: '#ffffff', strokeWidth: 2 }, labelStyle: { fill: '#ffffff', fontWeight: 700, fontSize: 11 }, labelBgStyle: { fill: '#0f172a', rx: 4, ry: 4, stroke: '#ffffff', strokeWidth: 1 }, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff' } },
   ], [notes])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
@@ -2873,15 +2860,10 @@ export default function App() {
   const [session, setSession] = useState<any>(null)
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [userSettings, setUserSettings] = useState<SettingsData>({
-    username: 'Mata',
+    username: 'User',
     language: 'en-US',
     translationLanguage: 'vi-VN',
-    teamMembers: [
-      { name: 'Alex (PM)', role: 'Product Manager', emoji: '👤' },
-      { name: 'Sarah (Dev)', role: 'Lead Engineer', emoji: '👩‍💻' },
-      { name: 'David (Design)', role: 'UI/UX Designer', emoji: '🎨' },
-      { name: 'Michael (CTO)', role: 'Tech Lead', emoji: '⚡' },
-    ]
+    teamMembers: []
   })
   const [isRecording, setIsRecording] = useState(false)
   const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([])
