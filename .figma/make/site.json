@@ -1,0 +1,10 @@
+{
+  "description": "This intuitive notes editor offers seamless recording and transcription features, ideal for users seeking efficient note-taking on Windows and macOS.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
