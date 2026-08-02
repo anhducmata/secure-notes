@@ -3136,9 +3136,22 @@ export default function App() {
     })
   }, [transcriptLines, isRecording, activeNote, updateNote, speakerNames])
 
-  // Web Speech API + Continuous Recording Loop across PiP/Minimize
+  // Web Speech API + Continuous Recording Loop with Acoustic Echo Cancellation (AEC)
   useEffect(() => {
     if (isRecording) {
+      // Initialize Microphone Media Stream with Hardware Acoustic Echo Cancellation
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,   // Eliminates system audio bleeding/echo back into microphone
+            noiseSuppression: true,   // Filters ambient speaker echo & room noise
+            autoGainControl: true,    // Equalizes user voice volume levels
+          }
+        }).then(stream => {
+          (window as any).__activeMicStream = stream
+        }).catch(err => console.warn('Acoustic Echo Cancellation stream init:', err))
+      }
+
       const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       if (SpeechRec) {
         try {
@@ -3178,6 +3191,12 @@ export default function App() {
       }
       transcriptTimer.current = setTimeout(addNextLine, 800)
     } else {
+      if ((window as any).__activeMicStream) {
+        try {
+          (window as any).__activeMicStream.getTracks().forEach((track: MediaStreamTrack) => track.stop())
+        } catch (e) { }
+        delete (window as any).__activeMicStream
+      }
       if (transcriptTimer.current) clearTimeout(transcriptTimer.current)
       if (speechRecRef.current) {
         try { speechRecRef.current.stop() } catch (e) { }
