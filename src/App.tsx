@@ -1954,11 +1954,11 @@ function Editor({ note, onChange, onDelete, showChat, onToggleChat, speakerNames
   const [showAddTagInput, setShowAddTagInput] = useState(false)
   const [newNoteTagInput, setNewNoteTagInput] = useState('')
 
-  // Dynamically extract speakers who actually spoke in this active note
+  // Dynamically extract speakers who actually spoke in this active note (must end with trailing colon)
   const activeNoteSpeakers = useMemo(() => {
     const speakers = new Set<string>()
     if (note && note.body) {
-      const regex = /<strong[^>]*>\s*([^:]+):?\s*<\/strong>/gi
+      const regex = /<strong[^>]*>\s*([^:<]+):\s*<\/strong>/gi
       let match
       while ((match = regex.exec(note.body)) !== null) {
         const foundName = match[1].trim()
