@@ -3048,73 +3048,26 @@ export default function App() {
     })
   }, [transcriptLines, isRecording, activeNote, updateNote, speakerNames])
 
-  // Web Speech API + Dual Stream (Microphone + System Audio Web Audio API DSP) Recording Pipeline
+  // Web Speech API + Dual Stream Recording Pipeline (Instant Start + Non-Blocking)
   useEffect(() => {
     if (isRecording) {
-      // 1. Initialize Microphone Media Stream (getUserMedia) with Hardware AEC
-      const getMic = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
-        ? navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
-        : Promise.resolve(null)
+      // 1. Start Microphone Stream with Hardware Acoustic Echo Cancellation
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        }).then(stream => {
+          (window as any).__activeMicStream = stream
+        }).catch(err => console.warn('Microphone stream error:', err))
+      }
 
-      // 2. Initialize System / Meeting Tab Audio Stream (getDisplayMedia)
-      const getSystem = (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)
-        ? navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).catch(err => {
-            console.warn('System audio capture optional permission skipped:', err)
-            return null
-          })
-        : Promise.resolve(null)
-
-      Promise.all([getMic, getSystem]).then(([micStream, systemStream]) => {
-        if (micStream) (window as any).__activeMicStream = micStream
-        if (systemStream && systemStream.getAudioTracks().length > 0) {
-          (window as any).__activeSystemStream = systemStream
-
-          // Attach Web Audio API DSP processor to measure System Audio speech level
-          try {
-            const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
-            if (AudioCtx) {
-              const ctx = new AudioCtx()
-              const sysSrc = ctx.createMediaStreamSource(systemStream)
-              const processor = ctx.createScriptProcessor(4096, 1, 1)
-              sysSrc.connect(processor)
-              // Connect to a silent gain node to avoid local speaker feedback
-              const silentGain = ctx.createGain()
-              silentGain.gain.value = 0
-              processor.connect(silentGain)
-              silentGain.connect(ctx.destination)
-
-              let systemSpeakingTimer: any = null
-              processor.onaudioprocess = (ev) => {
-                const input = ev.inputBuffer.getChannelData(0)
-                let sum = 0
-                for (let i = 0; i < input.length; i++) sum += Math.abs(input[i])
-                const avgVolume = sum / input.length
-
-                if (avgVolume > 0.004) {
-                  // Mark active system speaker signal
-                  (window as any).__systemIsSpeaking = true
-                  if (systemSpeakingTimer) clearTimeout(systemSpeakingTimer)
-                  systemSpeakingTimer = setTimeout(() => {
-                    (window as any).__systemIsSpeaking = false
-                  }, 1800)
-                }
-              }
-
-              (window as any).__sysAudioCtx = ctx
-            }
-          } catch (e) {
-            console.warn('System Audio DSP processor error:', e)
-          }
-        }
-      })
-
+      // 2. Start Speech Recognition IMMEDIATELY without waiting for dialogs
       const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       if (SpeechRec) {
         try {
           const rec = new SpeechRec()
           rec.continuous = true
           rec.interimResults = true
-          // Auto-detect browser speech language (supports both Vietnamese & English speech)
+          // Auto-detect browser locale (supports both Vietnamese & English speech)
           rec.lang = navigator.language || 'en-US'
 
           rec.onresult = (e: any) => {
@@ -3125,7 +3078,6 @@ export default function App() {
               const id = 'speech-' + i
               const elapsedSec = Math.floor((Date.now() - (recordingStartRef.current || Date.now())) / 1000)
               const timeRange = formatTimeRange(elapsedSec, 6)
-              // Dynamically attribute source based on System Audio DSP speaking signal
               const source: 'mic' | 'system' = (window as any).__systemIsSpeaking ? 'system' : 'mic'
 
               setTranscriptLines(prev => {
