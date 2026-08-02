@@ -3048,7 +3048,7 @@ export default function App() {
     })
   }, [transcriptLines, isRecording, activeNote, updateNote, speakerNames])
 
-  // Web Speech API + Continuous Microphone-Only Recording Loop (Hardware AEC active)
+  // Web Speech API + Continuous Microphone-Only Recording Loop (Auto-detect Language vi-VN/en-US + AEC)
   useEffect(() => {
     if (isRecording) {
       // Initialize Microphone Stream with Hardware Acoustic Echo Cancellation
@@ -3070,12 +3070,14 @@ export default function App() {
           const rec = new SpeechRec()
           rec.continuous = true
           rec.interimResults = true
-          rec.lang = 'en-US'
+          // Auto-detect browser speech language (supports both Vietnamese & English speech)
+          rec.lang = navigator.language || 'en-US'
 
           rec.onresult = (e: any) => {
             for (let i = e.resultIndex; i < e.results.length; i++) {
               const text = e.results[i][0].transcript
               const isFinal = e.results[i].isFinal
+              if (!text || !text.trim()) continue
               const id = 'speech-' + i
               const elapsedSec = Math.floor((Date.now() - (recordingStartRef.current || Date.now())) / 1000)
               const timeRange = formatTimeRange(elapsedSec, 6)
@@ -3092,9 +3094,24 @@ export default function App() {
             }
           }
 
+          rec.onerror = (err: any) => {
+            console.warn('Speech recognition error event:', err?.error)
+            if (isRecordingRef.current && err?.error !== 'aborted') {
+              setTimeout(() => {
+                if (isRecordingRef.current) {
+                  try { rec.start() } catch (e) { }
+                }
+              }, 300)
+            }
+          }
+
           rec.onend = () => {
             if (isRecordingRef.current) {
-              try { rec.start() } catch (e) { }
+              setTimeout(() => {
+                if (isRecordingRef.current) {
+                  try { rec.start() } catch (e) { }
+                }
+              }, 300)
             }
           }
 
