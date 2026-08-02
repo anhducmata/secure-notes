@@ -3048,7 +3048,7 @@ export default function App() {
     })
   }, [transcriptLines, isRecording, activeNote, updateNote, speakerNames])
 
-  // Web Speech API + Dual Stream (Microphone + System Audio) Recording Pipeline
+  // Web Speech API + Dual Stream (Microphone + System Audio Web Audio API DSP) Recording Pipeline
   useEffect(() => {
     if (isRecording) {
       // 1. Initialize Microphone Media Stream (getUserMedia) with Hardware AEC
@@ -3066,7 +3066,46 @@ export default function App() {
 
       Promise.all([getMic, getSystem]).then(([micStream, systemStream]) => {
         if (micStream) (window as any).__activeMicStream = micStream
-        if (systemStream) (window as any).__activeSystemStream = systemStream
+        if (systemStream && systemStream.getAudioTracks().length > 0) {
+          (window as any).__activeSystemStream = systemStream
+
+          // Attach Web Audio API DSP processor to measure System Audio speech level
+          try {
+            const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+            if (AudioCtx) {
+              const ctx = new AudioCtx()
+              const sysSrc = ctx.createMediaStreamSource(systemStream)
+              const processor = ctx.createScriptProcessor(4096, 1, 1)
+              sysSrc.connect(processor)
+              // Connect to a silent gain node to avoid local speaker feedback
+              const silentGain = ctx.createGain()
+              silentGain.gain.value = 0
+              processor.connect(silentGain)
+              silentGain.connect(ctx.destination)
+
+              let systemSpeakingTimer: any = null
+              processor.onaudioprocess = (ev) => {
+                const input = ev.inputBuffer.getChannelData(0)
+                let sum = 0
+                for (let i = 0; i < input.length; i++) sum += Math.abs(input[i])
+                const avgVolume = sum / input.length
+
+                if (avgVolume > 0.004) {
+                  // Mark active system speaker signal
+                  (window as any).__systemIsSpeaking = true
+                  if (systemSpeakingTimer) clearTimeout(systemSpeakingTimer)
+                  systemSpeakingTimer = setTimeout(() => {
+                    (window as any).__systemIsSpeaking = false
+                  }, 1800)
+                }
+              }
+
+              (window as any).__sysAudioCtx = ctx
+            }
+          } catch (e) {
+            console.warn('System Audio DSP processor error:', e)
+          }
+        }
       })
 
       const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -3086,15 +3125,17 @@ export default function App() {
               const id = 'speech-' + i
               const elapsedSec = Math.floor((Date.now() - (recordingStartRef.current || Date.now())) / 1000)
               const timeRange = formatTimeRange(elapsedSec, 6)
+              // Dynamically attribute source based on System Audio DSP speaking signal
+              const source: 'mic' | 'system' = (window as any).__systemIsSpeaking ? 'system' : 'mic'
 
               setTranscriptLines(prev => {
                 const idx = prev.findIndex(l => l.id === id)
                 if (idx !== -1) {
                   const updated = [...prev]
-                  updated[idx] = { id, text, final: isFinal, source: 'mic', timeRange }
+                  updated[idx] = { id, text, final: isFinal, source, timeRange }
                   return updated
                 }
-                return [{ id, text, final: isFinal, source: 'mic', timeRange }, ...prev.slice(0, 12)]
+                return [{ id, text, final: isFinal, source, timeRange }, ...prev.slice(0, 12)]
               })
             }
           }
@@ -3135,6 +3176,11 @@ export default function App() {
         try { (window as any).__activeSystemStream.getTracks().forEach((track: MediaStreamTrack) => track.stop()) } catch (e) { }
         delete (window as any).__activeSystemStream
       }
+      if ((window as any).__sysAudioCtx) {
+        try { (window as any).__sysAudioCtx.close() } catch (e) { }
+        delete (window as any).__sysAudioCtx
+      }
+      delete (window as any).__systemIsSpeaking
       if (speechRecRef.current) {
         try { speechRecRef.current.stop() } catch (e) { }
         speechRecRef.current = null
