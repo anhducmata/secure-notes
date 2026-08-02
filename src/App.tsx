@@ -3048,21 +3048,26 @@ export default function App() {
     })
   }, [transcriptLines, isRecording, activeNote, updateNote, speakerNames])
 
-  // Web Speech API + Continuous Microphone-Only Recording Loop (Auto-detect Language vi-VN/en-US + AEC)
+  // Web Speech API + Dual Stream (Microphone + System Audio) Recording Pipeline
   useEffect(() => {
     if (isRecording) {
-      // Initialize Microphone Stream with Hardware Acoustic Echo Cancellation
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,   // Eliminates system audio playing through speakers
-            noiseSuppression: true,   // Suppresses background room noise
-            autoGainControl: true,    // Equalizes user voice volume
-          }
-        }).then(stream => {
-          (window as any).__activeMicStream = stream
-        }).catch(err => console.warn('Microphone stream initialization error:', err))
-      }
+      // 1. Initialize Microphone Media Stream (getUserMedia) with Hardware AEC
+      const getMic = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+        ? navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+        : Promise.resolve(null)
+
+      // 2. Initialize System / Meeting Tab Audio Stream (getDisplayMedia)
+      const getSystem = (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)
+        ? navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).catch(err => {
+            console.warn('System audio capture optional permission skipped:', err)
+            return null
+          })
+        : Promise.resolve(null)
+
+      Promise.all([getMic, getSystem]).then(([micStream, systemStream]) => {
+        if (micStream) (window as any).__activeMicStream = micStream
+        if (systemStream) (window as any).__activeSystemStream = systemStream
+      })
 
       const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       if (SpeechRec) {
@@ -3125,6 +3130,10 @@ export default function App() {
       if ((window as any).__activeMicStream) {
         try { (window as any).__activeMicStream.getTracks().forEach((track: MediaStreamTrack) => track.stop()) } catch (e) { }
         delete (window as any).__activeMicStream
+      }
+      if ((window as any).__activeSystemStream) {
+        try { (window as any).__activeSystemStream.getTracks().forEach((track: MediaStreamTrack) => track.stop()) } catch (e) { }
+        delete (window as any).__activeSystemStream
       }
       if (speechRecRef.current) {
         try { speechRecRef.current.stop() } catch (e) { }
