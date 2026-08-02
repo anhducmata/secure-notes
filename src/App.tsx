@@ -2591,33 +2591,33 @@ function Editor({ note, onChange, onDelete, showChat, onToggleChat, speakerNames
                         </button>
                       </div>
                     ) : (
-                      /* Suggested Call Attendees Quick 1-Click Select */
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                        {(teamMembers && teamMembers.length > 0 ? teamMembers : [
-                          { name: 'Alex (PM)', role: 'PM', emoji: '👤' },
-                          { name: 'Sarah (Dev)', role: 'Lead Dev', emoji: '👩‍💻' },
-                          { name: 'David (Design)', role: 'Design', emoji: '🎨' },
-                          { name: 'Michael (CTO)', role: 'CTO', emoji: '⚡' },
-                        ]).map(sug => (
-                          <button
-                            key={sug.name}
-                            onClick={() => handleUpdateSpeakerName('system', `${sug.name} ${sug.emoji}`)}
-                            style={{
-                              border: 'none',
-                              background: speakerNames.system === `${sug.name} ${sug.emoji}` ? '#059669' : 'rgba(5,150,105,0.12)',
-                              color: speakerNames.system === `${sug.name} ${sug.emoji}` ? '#ffffff' : '#047857',
-                              borderRadius: 4,
-                              padding: '2px 6px',
-                              fontSize: 9.5,
-                              fontFamily: 'var(--font-body)',
-                              fontWeight: 500,
-                              cursor: 'pointer',
-                              transition: 'all 0.12s ease',
-                            }}
-                          >
-                            + {sug.name}
-                          </button>
-                        ))}
+                        {teamMembers && teamMembers.length > 0 ? (
+                          teamMembers.map(sug => (
+                            <button
+                              key={sug.name}
+                              onClick={() => handleUpdateSpeakerName('system', `${sug.name} ${sug.emoji || '👤'}`)}
+                              style={{
+                                border: 'none',
+                                background: speakerNames.system === `${sug.name} ${sug.emoji || '👤'}` ? '#059669' : 'rgba(5,150,105,0.12)',
+                                color: speakerNames.system === `${sug.name} ${sug.emoji || '👤'}` ? '#ffffff' : '#047857',
+                                borderRadius: 4,
+                                padding: '2px 6px',
+                                fontSize: 9.5,
+                                fontFamily: 'var(--font-body)',
+                                fontWeight: 500,
+                                cursor: 'pointer',
+                                transition: 'all 0.12s ease',
+                              }}
+                            >
+                              + {sug.name}
+                            </button>
+                          ))
+                        ) : (
+                          <span style={{ fontSize: 9.5, color: 'var(--color-text-faint)' }}>
+                            No team members added. Add in Settings ⚙️
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
