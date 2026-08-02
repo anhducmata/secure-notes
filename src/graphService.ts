@@ -21,13 +21,14 @@ export interface KnowledgeGraph {
 export function buildWorkspaceGraph(
   notes: any[],
   chatMessages: any[] = [],
-  transcriptLines: any[] = []
+  _transcriptLines: any[] = []
 ): KnowledgeGraph {
   const nodesMap = new Map<string, GraphNode>()
   const edges: GraphEdge[] = []
   const topicSet = new Set<string>()
+  const speakerSet = new Set<string>()
 
-  // 1. Index Note & Speaker & Topic Nodes
+  // 1. Index Note & Extract Dynamic Topics & Speakers
   notes.forEach(n => {
     const noteNodeId = `note-${n.id}`
     nodesMap.set(noteNodeId, {
@@ -37,15 +38,39 @@ export function buildWorkspaceGraph(
       color: '#4A47A3',
     })
 
-    const bodyText = (n.body || '').toLowerCase()
+    // Extract dynamic tags attached to note
+    if (Array.isArray(n.tags)) {
+      n.tags.forEach((tag: string) => {
+        if (typeof tag === 'string' && tag.trim()) {
+          const cleanTag = tag.startsWith('#') ? tag : `#${tag}`
+          topicSet.add(cleanTag)
+          edges.push({ source: noteNodeId, target: `topic-${cleanTag}`, relation: 'mentions_topic' })
+        }
+      })
+    }
 
-    // Extract key topics
-    if (bodyText.includes('pgbouncer')) topicSet.add('#pgbouncer')
-    if (bodyText.includes('retention') || bodyText.includes('ltv')) topicSet.add('#retention')
-    if (bodyText.includes('onboarding') || bodyText.includes('positioning')) topicSet.add('#onboarding-value')
-    if (bodyText.includes('design') || bodyText.includes('button')) topicSet.add('#design-system')
+    const bodyText = n.body || ''
+    // Extract dynamic hashtags from note body content
+    const hashtagRegex = /#([a-zA-Z0-9_-]+)/g
+    let hashMatch
+    while ((hashMatch = hashtagRegex.exec(bodyText)) !== null) {
+      const tag = `#${hashMatch[1]}`
+      topicSet.add(tag)
+      edges.push({ source: noteNodeId, target: `topic-${tag}`, relation: 'mentions_topic' })
+    }
 
-    // Attachments
+    // Extract dynamic speakers from note body content (<strong ...>Speaker Name:</strong>)
+    const speakerRegex = /<strong[^>]*>\s*([^:<]+):\s*<\/strong>/gi
+    let spkMatch
+    while ((spkMatch = speakerRegex.exec(bodyText)) !== null) {
+      const spkName = spkMatch[1].trim()
+      if (spkName && !spkName.includes('Ask AI') && !spkName.includes('RAG Context')) {
+        speakerSet.add(spkName)
+        edges.push({ source: noteNodeId, target: `speaker-${spkName}`, relation: 'spoken_by' })
+      }
+    }
+
+    // Index Attachments
     if (n.attachments) {
       n.attachments.forEach((att: any) => {
         const attNodeId = `att-${att.id}`
@@ -60,40 +85,30 @@ export function buildWorkspaceGraph(
     }
   })
 
-  // 2. Add Topic Nodes & Edges
+  // 2. Add Dynamic Topic Nodes
   topicSet.forEach(topic => {
     const topicNodeId = `topic-${topic}`
-    nodesMap.set(topicNodeId, {
-      id: topicNodeId,
-      label: topic,
-      type: 'topic',
-      color: '#2563EB',
-    })
-
-    notes.forEach(n => {
-      const bodyText = (n.body || '').toLowerCase()
-      if (bodyText.includes(topic.replace('#', ''))) {
-        edges.push({ source: `note-${n.id}`, target: topicNodeId, relation: 'mentions_topic' })
-      }
-    })
+    if (!nodesMap.has(topicNodeId)) {
+      nodesMap.set(topicNodeId, {
+        id: topicNodeId,
+        label: topic,
+        type: 'topic',
+        color: '#2563EB',
+      })
+    }
   })
 
-  // 3. Add Speaker Nodes & Edges
-  const speakers = ['You (Mata)', 'Orange Fog 🍊']
-  speakers.forEach(spk => {
+  // 3. Add Dynamic Speaker Nodes
+  speakerSet.forEach(spk => {
     const spkNodeId = `speaker-${spk}`
-    nodesMap.set(spkNodeId, {
-      id: spkNodeId,
-      label: spk,
-      type: 'speaker',
-      color: '#059669',
-    })
-
-    notes.forEach(n => {
-      if ((n.body || '').includes(spk)) {
-        edges.push({ source: `note-${n.id}`, target: spkNodeId, relation: 'spoken_by' })
-      }
-    })
+    if (!nodesMap.has(spkNodeId)) {
+      nodesMap.set(spkNodeId, {
+        id: spkNodeId,
+        label: spk,
+        type: 'speaker',
+        color: '#059669',
+      })
+    }
   })
 
   // 4. Index Chat Data Source Nodes & Edges
@@ -110,7 +125,7 @@ export function buildWorkspaceGraph(
 
         // Edge between Chat & mentioned notes
         notes.forEach(n => {
-          if (msg.text.toLowerCase().includes(n.title.toLowerCase())) {
+          if (n.title && msg.text.toLowerCase().includes(n.title.toLowerCase())) {
             edges.push({ source: chatNodeId, target: `note-${n.id}`, relation: 'queries_note' })
           }
         })
@@ -118,9 +133,20 @@ export function buildWorkspaceGraph(
     })
   }
 
+  // Deduplicate edges and verify valid nodes
+  const edgeSet = new Set<string>()
+  const uniqueEdges: GraphEdge[] = []
+  edges.forEach(e => {
+    const key = `${e.source}->${e.target}:${e.relation}`
+    if (!edgeSet.has(key) && nodesMap.has(e.source) && nodesMap.has(e.target)) {
+      edgeSet.add(key)
+      uniqueEdges.push(e)
+    }
+  })
+
   return {
     nodes: Array.from(nodesMap.values()),
-    edges,
+    edges: uniqueEdges,
   }
 }
 
