@@ -1954,6 +1954,22 @@ function Editor({ note, onChange, onDelete, showChat, onToggleChat, speakerNames
   const [showAddTagInput, setShowAddTagInput] = useState(false)
   const [newNoteTagInput, setNewNoteTagInput] = useState('')
 
+  // Dynamically extract speakers who actually spoke in this active note
+  const activeNoteSpeakers = useMemo(() => {
+    const speakers = new Set<string>()
+    if (note && note.body) {
+      const regex = /<strong[^>]*>\s*([^:]+):?\s*<\/strong>/gi
+      let match
+      while ((match = regex.exec(note.body)) !== null) {
+        const foundName = match[1].trim()
+        if (foundName && !foundName.includes('Ask AI') && !foundName.includes('RAG Context')) {
+          speakers.add(foundName)
+        }
+      }
+    }
+    return Array.from(speakers)
+  }, [note.body])
+
   const handleAddCustomNoteTag = (overrideTag?: string) => {
     const t = (overrideTag || newNoteTagInput).trim()
     if (!t) return
@@ -2508,145 +2524,57 @@ function Editor({ note, onChange, onDelete, showChat, onToggleChat, speakerNames
 
                 {/* Voice Cards */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {/* Voice 1: You (Mic) */}
-                  <div style={{
-                    background: playingSpeaker === 'mic' ? 'rgba(37,99,235,0.09)' : 'rgba(37,99,235,0.04)',
-                    padding: '8px 10px',
-                    borderRadius: 8,
-                    border: '1px solid rgba(37,99,235,0.18)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: '#2563eb' }}>You (Mata)</span>
-                      <span style={{ fontSize: 9.5, color: 'var(--color-text-faint)' }}>(Microphone)</span>
+                  {activeNoteSpeakers.length === 0 ? (
+                    <div style={{ padding: '12px 10px', textAlign: 'center', color: 'var(--color-text-faint)', fontSize: 10.5, background: 'rgba(0,0,0,0.02)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
+                      No speakers recorded in this note yet. Click Record to capture voice speech!
                     </div>
-                    <button
-                      onClick={() => playAudioSample('You', true)}
-                      title="Play Voice Audio Sample"
-                      style={{
-                        border: 'none',
-                        background: playingSpeaker === 'mic' ? '#2563eb' : 'rgba(37,99,235,0.12)',
-                        color: playingSpeaker === 'mic' ? '#ffffff' : '#2563eb',
-                        borderRadius: 12,
-                        padding: '2px 8px',
-                        fontSize: 9.5,
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 4,
-                      }}
-                    >
-                      <Volume2 size={10} />
-                      <span>{playingSpeaker === 'mic' ? 'Playing…' : 'Sample'}</span>
-                    </button>
-                  </div>
+                  ) : (
+                    activeNoteSpeakers.map((spkName, spkIdx) => {
+                      const isMic = spkName.toLowerCase().includes('you') || spkName.toLowerCase().includes('mata')
+                      const spkColor = isMic ? '#2563eb' : '#059669'
+                      const spkBg = isMic ? 'rgba(37,99,235,0.04)' : 'rgba(5,150,105,0.04)'
+                      const spkBorder = isMic ? 'rgba(37,99,235,0.18)' : 'rgba(5,150,105,0.18)'
+                      const spkBtnBg = isMic ? 'rgba(37,99,235,0.12)' : 'rgba(5,150,105,0.12)'
+                      const target = isMic ? 'mic' : 'system'
 
-                  {/* Voice 2: Detected Voice -> Assigned Speaker */}
-                  <div style={{
-                    background: playingSpeaker === 'system' ? 'rgba(5,150,105,0.09)' : 'rgba(5,150,105,0.04)',
-                    padding: '8px 10px',
-                    borderRadius: 8,
-                    border: '1px solid rgba(5,150,105,0.18)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 6,
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: '#059669' }}>{speakerNames.system}</span>
-                        {!editingSpeaker && (
-                          <button
-                            onClick={() => setEditingSpeaker(true)}
-                            style={{ border: 'none', background: 'transparent', color: 'var(--color-text-faint)', cursor: 'pointer', padding: 0 }}
-                            title="Type custom name"
-                          >
-                            <Edit2 size={10} />
-                          </button>
-                        )}
-                      </div>
-
-                      <button
-                        onClick={() => playAudioSample(speakerNames.system, false)}
-                        title="Play Voice Audio Sample"
-                        style={{
-                          border: 'none',
-                          background: playingSpeaker === 'system' ? '#059669' : 'rgba(5,150,105,0.12)',
-                          color: playingSpeaker === 'system' ? '#ffffff' : '#059669',
-                          borderRadius: 12,
-                          padding: '2px 8px',
-                          fontSize: 9.5,
-                          fontWeight: 600,
-                          cursor: 'pointer',
+                      return (
+                        <div key={spkIdx} style={{
+                          background: playingSpeaker === target ? 'rgba(37,99,235,0.09)' : spkBg,
+                          padding: '8px 10px',
+                          borderRadius: 8,
+                          border: `1px solid ${spkBorder}`,
                           display: 'flex',
                           alignItems: 'center',
-                          gap: 4,
-                        }}
-                      >
-                        <Volume2 size={10} />
-                        <span>{playingSpeaker === 'system' ? 'Playing…' : 'Sample'}</span>
-                      </button>
-                    </div>
-
-                    {editingSpeaker ? (
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <input
-                          type="text"
-                          value={systemNameInput}
-                          onChange={e => setSystemNameInput(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') {
-                              handleUpdateSpeakerName('system', systemNameInput)
-                              setEditingSpeaker(false)
-                            }
-                          }}
-                          placeholder="Type real speaker name"
-                          style={{ flex: 1, fontSize: 10, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--color-border)', outline: 'none' }}
-                          autoFocus
-                        />
-                        <button
-                          onClick={() => {
-                            handleUpdateSpeakerName('system', systemNameInput)
-                            setEditingSpeaker(false)
-                          }}
-                          style={{ border: 'none', background: 'var(--color-accent)', color: 'white', fontSize: 10, borderRadius: 4, padding: '2px 6px', cursor: 'pointer' }}
-                        >
-                          Save
-                        </button>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                        {teamMembers && teamMembers.length > 0 ? (
-                          teamMembers.map(sug => (
-                            <button
-                              key={sug.name}
-                              onClick={() => handleUpdateSpeakerName('system', `${sug.name} ${sug.emoji || '👤'}`)}
-                              style={{
-                                border: 'none',
-                                background: speakerNames.system === `${sug.name} ${sug.emoji || '👤'}` ? '#059669' : 'rgba(5,150,105,0.12)',
-                                color: speakerNames.system === `${sug.name} ${sug.emoji || '👤'}` ? '#ffffff' : '#047857',
-                                borderRadius: 4,
-                                padding: '2px 6px',
-                                fontSize: 9.5,
-                                fontFamily: 'var(--font-body)',
-                                fontWeight: 500,
-                                cursor: 'pointer',
-                                transition: 'all 0.12s ease',
-                              }}
-                            >
-                              + {sug.name}
-                            </button>
-                          ))
-                        ) : (
-                          <span style={{ fontSize: 9.5, color: 'var(--color-text-faint)' }}>
-                            No team members added. Add in Settings ⚙️
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                          justifyContent: 'space-between',
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 11, fontWeight: 600, color: spkColor }}>{spkName}</span>
+                            <span style={{ fontSize: 9.5, color: 'var(--color-text-faint)' }}>({isMic ? 'Microphone' : 'System Audio'})</span>
+                          </div>
+                          <button
+                            onClick={() => playAudioSample(spkName, isMic)}
+                            title="Play Voice Audio Sample"
+                            style={{
+                              border: 'none',
+                              background: playingSpeaker === target ? spkColor : spkBtnBg,
+                              color: playingSpeaker === target ? '#ffffff' : spkColor,
+                              borderRadius: 12,
+                              padding: '2px 8px',
+                              fontSize: 9.5,
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                            }}
+                          >
+                            <Volume2 size={10} />
+                            <span>{playingSpeaker === target ? 'Playing…' : 'Sample'}</span>
+                          </button>
+                        </div>
+                      )
+                    })
+                  )}
                 </div>
               </div>
 
