@@ -3048,21 +3048,46 @@ export default function App() {
     })
   }, [transcriptLines, isRecording, activeNote, updateNote, speakerNames])
 
-  // Web Speech API + Continuous Recording Loop with Hardware Acoustic Echo Cancellation (AEC)
+  // Web Speech API + Continuous Recording Loop with System & Mic Audio Capture
   useEffect(() => {
     if (isRecording) {
-      // Initialize Microphone Media Stream with Hardware Acoustic Echo Cancellation
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,   // Eliminates system audio bleeding/echo back into microphone
-            noiseSuppression: true,   // Filters ambient speaker echo & room noise
-            autoGainControl: true,    // Equalizes user voice volume levels
+      // 1. Initialize Microphone Media Stream with Hardware AEC
+      const getMic = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+        ? navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+        : Promise.resolve(null)
+
+      // 2. Initialize System / Meeting Tab Audio Stream via getDisplayMedia
+      const getSystem = (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)
+        ? navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).catch(err => {
+            console.warn('System audio capture skipped/canceled:', err)
+            return null
+          })
+        : Promise.resolve(null)
+
+      Promise.all([getMic, getSystem]).then(([micStream, systemStream]) => {
+        if (micStream) (window as any).__activeMicStream = micStream
+        if (systemStream) (window as any).__activeSystemStream = systemStream
+
+        // Combine Audio Streams in AudioContext
+        try {
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+          if (AudioCtx && (micStream || systemStream)) {
+            const ctx = new AudioCtx()
+            const dest = ctx.createMediaStreamDestination()
+            if (micStream && micStream.getAudioTracks().length > 0) {
+              const micSrc = ctx.createMediaStreamSource(micStream)
+              micSrc.connect(dest)
+            }
+            if (systemStream && systemStream.getAudioTracks().length > 0) {
+              const sysSrc = ctx.createMediaStreamSource(systemStream)
+              sysSrc.connect(dest)
+            }
+            (window as any).__combinedAudioStream = dest.stream
           }
-        }).then(stream => {
-          (window as any).__activeMicStream = stream
-        }).catch(err => console.warn('Acoustic Echo Cancellation stream init:', err))
-      }
+        } catch (e) {
+          console.warn('Web Audio API stream mixing fallback:', e)
+        }
+      })
 
       const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       if (SpeechRec) {
@@ -3106,10 +3131,16 @@ export default function App() {
       }
     } else {
       if ((window as any).__activeMicStream) {
-        try {
-          (window as any).__activeMicStream.getTracks().forEach((track: MediaStreamTrack) => track.stop())
-        } catch (e) { }
+        try { (window as any).__activeMicStream.getTracks().forEach((track: MediaStreamTrack) => track.stop()) } catch (e) { }
         delete (window as any).__activeMicStream
+      }
+      if ((window as any).__activeSystemStream) {
+        try { (window as any).__activeSystemStream.getTracks().forEach((track: MediaStreamTrack) => track.stop()) } catch (e) { }
+        delete (window as any).__activeSystemStream
+      }
+      if ((window as any).__combinedAudioStream) {
+        try { (window as any).__combinedAudioStream.getTracks().forEach((track: MediaStreamTrack) => track.stop()) } catch (e) { }
+        delete (window as any).__combinedAudioStream
       }
       if (speechRecRef.current) {
         try { speechRecRef.current.stop() } catch (e) { }
