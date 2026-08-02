@@ -3024,23 +3024,7 @@ export default function App() {
 
   const insertedIdsRef = useRef<Set<string>>(new Set())
 
-  const addNextLine = useCallback(() => {
-    if (!isRecordingRef.current) return
-    const item = TRANSCRIPT_SEGMENTS[transcriptSegIdx.current % TRANSCRIPT_SEGMENTS.length]
-    transcriptSegIdx.current++
-    const id = String(Date.now())
-    const source: 'mic' | 'system' = item.source || 'mic'
-    const text = item.text.replace(/^System\s+Audio:\s*/i, '')
-    const elapsedSec = Math.floor((Date.now() - (recordingStartRef.current || Date.now())) / 1000)
-    const timeRange = formatTimeRange(elapsedSec, 6)
-    // Prepend newest line to TOP of array with progressive typing for longer sentence
-    setTranscriptLines(prev => [{ id, text: text.slice(0, Math.ceil(text.length * 0.35)), final: false, source, timeRange }, ...prev.slice(0, 12)])
-    setTimeout(() => setTranscriptLines(prev => prev.map(l => l.id === id ? { ...l, text, final: true } : l)), 1400)
-    // Wait longer (5.5s to 8.5s) to accumulate longer complete sentences before emitting next transcript
-    if (isRecordingRef.current) {
-      transcriptTimer.current = setTimeout(addNextLine, 5500 + Math.random() * 3000)
-    }
-  }, [])
+
 
   // Auto-insert completed transcript line into active note at the TOP (after title)
   useEffect(() => {
@@ -3064,7 +3048,7 @@ export default function App() {
     })
   }, [transcriptLines, isRecording, activeNote, updateNote, speakerNames])
 
-  // Web Speech API + Continuous Recording Loop with Acoustic Echo Cancellation (AEC)
+  // Web Speech API + Continuous Recording Loop with Hardware Acoustic Echo Cancellation (AEC)
   useEffect(() => {
     if (isRecording) {
       // Initialize Microphone Media Stream with Hardware Acoustic Echo Cancellation
@@ -3093,14 +3077,17 @@ export default function App() {
               const text = e.results[i][0].transcript
               const isFinal = e.results[i].isFinal
               const id = 'speech-' + i
+              const elapsedSec = Math.floor((Date.now() - (recordingStartRef.current || Date.now())) / 1000)
+              const timeRange = formatTimeRange(elapsedSec, 6)
+
               setTranscriptLines(prev => {
                 const idx = prev.findIndex(l => l.id === id)
                 if (idx !== -1) {
                   const updated = [...prev]
-                  updated[idx] = { id, text, final: isFinal, source: 'mic' }
+                  updated[idx] = { id, text, final: isFinal, source: 'mic', timeRange }
                   return updated
                 }
-                return [{ id, text: text, final: isFinal, source: 'mic' }, ...prev.slice(0, 12)]
+                return [{ id, text, final: isFinal, source: 'mic', timeRange }, ...prev.slice(0, 12)]
               })
             }
           }
@@ -3114,10 +3101,9 @@ export default function App() {
           rec.start()
           speechRecRef.current = rec
         } catch (e) {
-          console.warn('Speech recognition fallback:', e)
+          console.warn('Speech recognition error:', e)
         }
       }
-      transcriptTimer.current = setTimeout(addNextLine, 800)
     } else {
       if ((window as any).__activeMicStream) {
         try {
@@ -3125,20 +3111,18 @@ export default function App() {
         } catch (e) { }
         delete (window as any).__activeMicStream
       }
-      if (transcriptTimer.current) clearTimeout(transcriptTimer.current)
       if (speechRecRef.current) {
         try { speechRecRef.current.stop() } catch (e) { }
         speechRecRef.current = null
       }
     }
     return () => {
-      if (transcriptTimer.current) clearTimeout(transcriptTimer.current)
       if (speechRecRef.current) {
         try { speechRecRef.current.stop() } catch (e) { }
         speechRecRef.current = null
       }
     }
-  }, [isRecording, addNextLine])
+  }, [isRecording])
 
   // Activate PiP ONLY when leaving the page/tab, close when returning
   useEffect(() => {
