@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import useSWR from "swr"
 import { Plus, Search, ChevronLeft, Lock, Share2, Trash2 } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
@@ -72,6 +72,7 @@ export function NotesApp() {
   const [pendingChanges, setPendingChanges] = useState<DecryptedNoteWithMeta | null>(null)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [limitError, setLimitError] = useState<string | null>(null)
+  const noteEditorRef = useRef<HTMLTextAreaElement>(null)
 
   // Encryption key derived from user's password (set during login)
   const encryptionPassword = user?.encryptionKey || ""
@@ -252,6 +253,14 @@ export function NotesApp() {
       mutate()
     }
   }, [user?.encryptionKey, mutate])
+
+  // Keep the newest transcribed text around the middle of the editor while older text scrolls away.
+  useEffect(() => {
+    const editor = noteEditorRef.current
+    if (!editor) return
+
+    editor.scrollTop = Math.max(0, editor.scrollHeight - editor.clientHeight / 2)
+  }, [selectedNote?.content])
 
   // Mobile check
   useEffect(() => {
@@ -525,6 +534,7 @@ export function NotesApp() {
             <div className="flex-1 overflow-y-auto p-4">
               <textarea
                 className="note-editor-content h-full w-full resize-none bg-transparent text-white focus:outline-none"
+                ref={noteEditorRef}
                 value={selectedNote.content}
                 onChange={(e) => handleNoteChange(e.target.value)}
                 placeholder="Type something..."
@@ -698,6 +708,7 @@ export function NotesApp() {
             <div className="flex-1 overflow-y-auto p-6">
               <textarea
                 className="note-editor-content h-full w-full resize-none bg-transparent text-lg text-white focus:outline-none"
+                ref={noteEditorRef}
                 value={selectedNote.content}
                 onChange={(e) => handleNoteChange(e.target.value)}
                 placeholder="Type something..."
