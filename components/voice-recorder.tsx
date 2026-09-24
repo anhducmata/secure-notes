@@ -407,16 +407,18 @@ export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onT
           else if (isExpanded) startRecording()
           else setIsExpanded(true)
         }}
-        className={`p-2 rounded-lg transition-colors ${
+        className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
           isRecording
-            ? "text-red-400 hover:bg-zinc-800"
+            ? "bg-red-500/10 text-red-400 hover:bg-red-500/20"
             : isExpanded
-              ? "text-blue-400 bg-zinc-800 hover:bg-zinc-700"
-              : "text-gray-400 hover:text-blue-400 hover:bg-zinc-800"
+              ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
+              : "text-gray-300 hover:bg-zinc-800 hover:text-blue-400"
         }`}
         title={isRecording ? "Stop recording" : isExpanded ? "Start recording" : "Recording options"}
+        aria-label={isRecording ? "Stop recording" : isExpanded ? "Start recording" : "Open recording options"}
       >
         <AudioLines className={`h-4 w-4 ${isRecording && !isPaused ? "animate-pulse" : ""}`} />
+        <span>{isRecording ? "Stop" : isExpanded ? "Start recording" : "Record"}</span>
       </button>
     </div>
   )
