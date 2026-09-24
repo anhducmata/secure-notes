@@ -35,9 +35,10 @@ export async function GET(
 
     const key = SHARE_LINK_KEY(shareId)
     
-    // Get the share data
-    const rawData = await redis.get(key)
-    
+    // Atomically read and delete the share. This prevents two concurrent requests
+    // from both consuming the same one-time link.
+    const rawData = await redis.getdel(key)
+
     if (!rawData) {
       return NextResponse.json(
         { 
@@ -52,9 +53,6 @@ export async function GET(
     const shareData: ShareLinkData = typeof rawData === "string" 
       ? JSON.parse(rawData) 
       : rawData as ShareLinkData
-
-    // Delete the link immediately after reading (one-time use)
-    await redis.del(key)
 
     // Return only the encrypted payload – the server never exposes plaintext
     return NextResponse.json({
