@@ -1928,12 +1928,13 @@ function ChatPanel({ notes, activeNote, onSelectNote, onClose, onAddAttachment, 
 }
 
 // ── Editor ─────────────────────────────────────────────────────────────────
-function Editor({ note, onChange, onDelete, showChat, onToggleChat, speakerNames, onUpdateSpeakerNames, onResetSpeakerNames, teamMembers, translationLanguage, allNotes, onOpenGraph }: {
+function Editor({ note, onChange, onDelete, showChat, onToggleChat, speakerNames, onUpdateSpeakerNames, onResetSpeakerNames, teamMembers, translationLanguage, allNotes, onOpenGraph, isRecording }: {
   note: Note
   onChange: (id: string, updates: Partial<Note>) => void
   onDelete: (id: string) => void
   showChat: boolean
   onToggleChat: () => void
+  isRecording?: boolean
   speakerNames: { mic: string; system: string }
   onUpdateSpeakerNames: (updates: Partial<{ mic: string; system: string }>) => void
   onResetSpeakerNames: () => void
@@ -2059,6 +2060,17 @@ function Editor({ note, onChange, onDelete, showChat, onToggleChat, speakerNames
       enforceNonEditableSpeakerTags()
     }
   }, [note.body, note.id])
+
+  useEffect(() => {
+    if (!isRecording || !editorRef.current) return
+
+    const frame = requestAnimationFrame(() => {
+      const firstTranscriptLine = editorRef.current?.querySelector('h2 ~ p')
+      firstTranscriptLine?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+
+    return () => cancelAnimationFrame(frame)
+  }, [note.body, isRecording])
 
   const handleInput = () => {
     if (editorRef.current) {
@@ -3247,9 +3259,10 @@ export default function App() {
           onResetSpeakerNames={resetSpeakerNames}
           teamMembers={userSettings.teamMembers}
           translationLanguage={userSettings.translationLanguage}
-          allNotes={notes}
-          onOpenGraph={() => setCurrentView('graph')}
-        />
+  allNotes={notes}
+  onOpenGraph={() => setCurrentView('graph')}
+  isRecording={isRecording}
+  />
         {showChat && (
           <ChatPanel
             notes={notes}
