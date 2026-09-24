@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useCallback } from "react"
-import { Mic, MicOff, AudioLines, Volume2, VolumeX, Pause, Play } from "lucide-react"
+import { AudioLines, Pause, Play } from "lucide-react"
 
 const SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket"
 const SAMPLE_RATE = 16000
@@ -43,14 +43,8 @@ interface Pipeline {
 export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onTranscriptUpdate, onRecordingStart, onRecordingStop }: VoiceRecorderProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
-  const [isExpanded, setIsExpanded] = useState(false)
   const [hasSystemAudio, setHasSystemAudio] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [systemAudioDenied, setSystemAudioDenied] = useState(false)
-  const [useMic, setUseMic] = useState(false)
-  const [useSystem, setUseSystem] = useState(true)
-  const [micMuted, setMicMuted] = useState(false)
-  const [sysMuted, setSysMuted] = useState(false)
 
 
   const micPipelineRef = useRef<Pipeline | null>(null)
@@ -142,11 +136,7 @@ export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onT
     sysPipelineRef.current = null
     setIsRecording(false)
     setIsPaused(false)
-    setIsExpanded(false)
     setHasSystemAudio(false)
-    setSystemAudioDenied(false)
-    setMicMuted(false)
-    setSysMuted(false)
     onRecordingStop()
   }, [onRecordingStop])
 
@@ -272,127 +262,52 @@ export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onT
     return pipeline
   }, [apiKey, silenceTimeoutSec, cleanup])
 
-  const toggleMicDuringRecording = useCallback(async () => {
-    const p = micPipelineRef.current
-    if (p) {
-      const muting = !micMuted
-      p.stream.getAudioTracks().forEach((t) => { t.enabled = !muting })
-      setMicMuted(muting)
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-        micPipelineRef.current = makePipeline(stream)
-        setMicMuted(false)
-        setUseMic(true)
-      } catch {
-        setError("Mic access denied")
-        setTimeout(() => setError(null), 3000)
-      }
-    }
-  }, [micMuted, makePipeline])
-
-  const toggleSysDuringRecording = useCallback(() => {
-    const p = sysPipelineRef.current
-    if (!p) return
-    const muting = !sysMuted
-    p.stream.getAudioTracks().forEach((t) => { t.enabled = !muting })
-    setSysMuted(muting)
-  }, [sysMuted])
-
   const startRecording = useCallback(async () => {
     if (!apiKey) { setError("Set Soniox API key in Settings first"); setTimeout(() => setError(null), 3500); return }
-    if (!useMic && !useSystem) { setError("Enable mic or system audio first"); setTimeout(() => setError(null), 3500); return }
     setError(null)
 
     try {
       let micStarted = false
       let sysStarted = false
 
-      if (useMic) {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-          micPipelineRef.current = makePipeline(stream)
-          micStarted = true
-        } catch (err: any) {
-          if (!useSystem) throw err
-        }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        micPipelineRef.current = makePipeline(stream)
+        micStarted = true
+      } catch {
+        // Continue with system audio when microphone permission is unavailable.
       }
 
-      if (useSystem) {
-        try {
-          const displayStream = await (navigator.mediaDevices as any).getDisplayMedia({
-            audio: { echoCancellation: false, noiseSuppression: false },
-            video: true,
-          })
-          displayStream.getVideoTracks().forEach((t: MediaStreamTrack) => t.stop())
-          const audioTracks = displayStream.getAudioTracks().filter((t: MediaStreamTrack) => t.readyState === "live")
-          if (audioTracks.length > 0) {
-            sysPipelineRef.current = makePipeline(new MediaStream(audioTracks))
-            setHasSystemAudio(true)
-            sysStarted = true
-          } else if (!micStarted) {
-            setSystemAudioDenied(true); throw new Error("system_audio_denied")
-          }
-        } catch (err: any) {
-          if (err?.message === "system_audio_denied") throw err
-          if (!micStarted) { setSystemAudioDenied(true); throw new Error("system_audio_denied") }
+      try {
+        const displayStream = await (navigator.mediaDevices as any).getDisplayMedia({
+          audio: { echoCancellation: false, noiseSuppression: false },
+          video: true,
+        })
+        displayStream.getVideoTracks().forEach((t: MediaStreamTrack) => t.stop())
+        const audioTracks = displayStream.getAudioTracks().filter((t: MediaStreamTrack) => t.readyState === "live")
+        if (audioTracks.length > 0) {
+          sysPipelineRef.current = makePipeline(new MediaStream(audioTracks))
+          setHasSystemAudio(true)
+          sysStarted = true
         }
+      } catch {
+        // Continue with microphone when system audio is unavailable.
       }
 
       if (!micStarted && !sysStarted) throw new Error("No audio source available")
       setIsRecording(true)
       onRecordingStart()
     } catch (err: any) {
-      if (err?.message !== "system_audio_denied") setError(err?.message || "Failed to access audio")
+      setError(err?.message || "Failed to access audio")
       cleanup()
     }
-  }, [apiKey, useMic, useSystem, onRecordingStart, cleanup, makePipeline])
+  }, [apiKey, onRecordingStart, cleanup, makePipeline])
 
   return (
     <div className="flex items-center gap-1">
-      {systemAudioDenied && (
-        <span className="text-xs text-yellow-400 flex items-center gap-1">
-          No system audio.{" "}
-          <button className="underline hover:text-yellow-200" onClick={() => { setSystemAudioDenied(false); setUseMic(true); setUseSystem(false) }}>
-            Use mic
-          </button>
-        </span>
-      )}
-      {error && !systemAudioDenied && (
+      {error && (
         <span className="text-xs text-red-400 max-w-[140px] truncate" title={error}>{error}</span>
       )}
-
-      {/* Toggles + language — only visible when expanded or recording */}
-      <div className={`flex items-center gap-1 overflow-hidden transition-all duration-200 ${
-        isExpanded || isRecording ? "opacity-100 max-w-xs" : "w-0 opacity-0 pointer-events-none"
-      }`}>
-        <button
-          onClick={() => isRecording ? toggleMicDuringRecording() : setUseMic((v) => !v)}
-          className={`p-2 rounded-lg transition-colors shrink-0 ${
-            isRecording
-              ? micMuted ? "text-gray-500 bg-zinc-800 hover:text-yellow-400" : "text-yellow-400 bg-zinc-800 hover:text-gray-400"
-              : useMic ? "text-yellow-400 bg-zinc-800" : "text-gray-500 hover:text-gray-300 hover:bg-zinc-800"
-          }`}
-          title={isRecording ? (micMuted ? "Unmute mic" : "Mute mic") : (useMic ? "Mic on" : "Mic off")}
-        >
-          {isRecording ? (micMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />) : (useMic ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />)}
-        </button>
-
-        <button
-          onClick={() => isRecording ? toggleSysDuringRecording() : setUseSystem((v) => !v)}
-          disabled={isRecording && !sysPipelineRef.current}
-          className={`p-2 rounded-lg transition-colors shrink-0 ${
-            isRecording
-              ? !sysPipelineRef.current ? "text-gray-600 cursor-not-allowed"
-                : sysMuted ? "text-gray-500 bg-zinc-800 hover:text-green-400" : "text-green-400 bg-zinc-800 hover:text-gray-400"
-              : useSystem ? "text-green-400 bg-zinc-800" : "text-gray-500 hover:text-gray-300 hover:bg-zinc-800"
-          } disabled:opacity-40 disabled:cursor-not-allowed`}
-          title={isRecording ? (!sysPipelineRef.current ? "System audio not available" : sysMuted ? "Unmute system" : "Mute system") : (useSystem ? "System audio on" : "System audio off")}
-        >
-          {isRecording && sysMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-        </button>
-
-      </div>
 
       {/* Pause / Resume button — only during recording */}
       {isRecording && (
@@ -407,25 +322,19 @@ export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onT
         </button>
       )}
 
-      {/* Main button: idle → expand; expanded → start; recording → stop */}
+      {/* One-button recording flow: start captures microphone and system audio automatically. */}
       <button
-        onClick={() => {
-          if (isRecording) stopRecording()
-          else if (isExpanded) startRecording()
-          else setIsExpanded(true)
-        }}
+        onClick={() => isRecording ? stopRecording() : startRecording()}
         className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
           isRecording
             ? "bg-red-500/10 text-red-400 hover:bg-red-500/20"
-            : isExpanded
-              ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
-              : "text-gray-300 hover:bg-zinc-800 hover:text-blue-400"
+            : "text-gray-300 hover:bg-zinc-800 hover:text-blue-400"
         }`}
-        title={isRecording ? "Stop recording" : isExpanded ? "Start recording" : "Recording options"}
-        aria-label={isRecording ? "Stop recording" : isExpanded ? "Start recording" : "Open recording options"}
+        title={isRecording ? "Stop recording" : "Start recording"}
+        aria-label={isRecording ? "Stop recording" : "Start recording"}
       >
         <AudioLines className={`h-4 w-4 ${isRecording && !isPaused ? "animate-pulse" : ""}`} />
-        <span>{isRecording ? "Stop" : isExpanded ? "Start recording" : "Record"}</span>
+        <span>{isRecording ? "Stop" : "Record"}</span>
       </button>
     </div>
   )
