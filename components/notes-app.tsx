@@ -5,7 +5,7 @@ import useSWR from "swr"
 import { Plus, Search, ChevronLeft, Lock, Share2, Trash2, Brain, Send, Bot, User, Loader2, FileText, MessageSquare, Trash, Eye, EyeOff, Download, Play, Pause, X } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
-import { getSonioxApiKey, getSilenceTimeout, getTranscriptionLang, getOpenAiApiKey, getDeepseekApiKey } from "@/lib/user-settings"
+import { getSilenceTimeout, getTranscriptionLang, getOpenAiApiKey, getDeepseekApiKey } from "@/lib/user-settings"
 import { PinLoginModal, storePinData, getPinData, removePinData } from "@/components/pin-login-modal"
 import {
   encryptNote,
@@ -219,7 +219,6 @@ export function NotesApp() {
   const [pendingChanges, setPendingChanges] = useState<DecryptedNoteWithMeta | null>(null)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [limitError, setLimitError] = useState<string | null>(null)
-  const [sonioxApiKey, setSonioxApiKey] = useState("")
   const [silenceTimeoutSec] = useState(() => getSilenceTimeout())
   const [transcriptionLang, setTranscriptionLang] = useState("en")
 
@@ -421,9 +420,7 @@ export function NotesApp() {
     return () => window.removeEventListener("resize", check)
   }, [])
 
-  // Load Soniox API key from localStorage
   useEffect(() => {
-    setSonioxApiKey(getSonioxApiKey())
     setTranscriptionLang(getTranscriptionLang())
   }, [])
 
@@ -651,8 +648,6 @@ export function NotesApp() {
   // Voice recorder handlers
   const handleRecordingStart = useCallback(() => {
     recordingBaseContentRef.current = selectedNote?.content ?? ""
-    // Refresh API key from storage each time recording starts (user may have updated it)
-    setSonioxApiKey(getSonioxApiKey())
     setTranscriptionLang(getTranscriptionLang())
 
     // Auto-title new notes with recording timestamp
@@ -912,8 +907,7 @@ export function NotesApp() {
                 </button>
                 <div className="flex items-center gap-1">
                   <VoiceRecorder
-                    apiKey={sonioxApiKey}
-                    lang={transcriptionLang}
+                              lang={transcriptionLang}
                     silenceTimeoutSec={silenceTimeoutSec}
                     onTranscriptUpdate={handleTranscriptUpdate}
                     onRecordingStart={handleRecordingStart}
@@ -1249,8 +1243,7 @@ export function NotesApp() {
                   />
                   <div className="flex items-center gap-1 ml-4">
                     <VoiceRecorder
-                      apiKey={sonioxApiKey}
-                      lang={transcriptionLang}
+                                  lang={transcriptionLang}
                       silenceTimeoutSec={silenceTimeoutSec}
                       onTranscriptUpdate={handleTranscriptUpdate}
                       onRecordingStart={handleRecordingStart}

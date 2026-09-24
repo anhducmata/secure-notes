@@ -9,12 +9,6 @@ export function getAIModel(): string {
   return localStorage.getItem("ai_model") || DEFAULT_AI_MODEL
 }
 
-export function getSonioxApiKey(): string {
-  const configuredKey = process.env.NEXT_PUBLIC_SONIOX_API_KEY || ""
-  if (typeof window === "undefined") return configuredKey
-  return localStorage.getItem("soniox_api_key") || configuredKey
-}
-
 export function getOpenAiApiKey(): string {
   if (typeof window === "undefined") return ""
   return localStorage.getItem("openai_api_key") || ""
