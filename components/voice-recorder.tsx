@@ -188,7 +188,14 @@ export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onT
     const ctx = new AudioContext({ sampleRate: SAMPLE_RATE })
     const processor = ctx.createScriptProcessor(BUFFER_SIZE, 1, 1)
     ctx.createMediaStreamSource(stream).connect(processor)
-    processor.connect(ctx.destination)
+
+    // Keep ScriptProcessorNode connected so browsers continue firing audio events,
+    // but mute its output to prevent captured system audio from looping back through
+    // the microphone and speakers.
+    const monitor = ctx.createGain()
+    monitor.gain.value = 0
+    processor.connect(monitor)
+    monitor.connect(ctx.destination)
 
     const ws = new WebSocket(SONIOX_WS_URL)
     const pipeline: Pipeline = { stream, ctx, processor, ws, finalLines: [], currentText: "", unfinalizedText: "", currentTs: Date.now() }
