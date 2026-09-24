@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { LogOut } from "lucide-react"
+import { useTheme } from "next-themes"
+import { LogOut, Moon, Sun } from "lucide-react"
 
 interface AvatarButtonProps {
   user: { name: string; email: string } | null
@@ -12,6 +13,8 @@ interface AvatarButtonProps {
 export function AvatarButton({ user, onClick, onSignOut }: AvatarButtonProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const { theme, setTheme } = useTheme()
+  const isDark = theme === "dark"
 
   // Close menu on outside click
   useEffect(() => {
@@ -68,6 +71,15 @@ export function AvatarButton({ user, onClick, onSignOut }: AvatarButtonProps) {
 
           {/* Menu items */}
           <div className="p-1.5">
+            <button
+              onClick={() => setTheme(isDark ? "light" : "dark")}
+              className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition-colors hover:bg-white/5"
+              style={{ color: "rgba(255,255,255,0.75)" }}
+              role="menuitem"
+            >
+              {isDark ? <Sun className="h-4 w-4" style={{ color: "rgb(234,179,8)" }} /> : <Moon className="h-4 w-4" style={{ color: "rgba(255,255,255,0.5)" }} />}
+              {isDark ? "Light mode" : "Dark mode"}
+            </button>
             <button
               onClick={() => { setMenuOpen(false); onSignOut() }}
               className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition-colors hover:bg-white/5"
