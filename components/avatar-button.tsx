@@ -1,16 +1,15 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { LogOut, Settings } from "lucide-react"
+import { LogOut } from "lucide-react"
 
 interface AvatarButtonProps {
   user: { name: string; email: string } | null
   onClick: () => void
   onSignOut: () => void
-  onSettings?: () => void
 }
 
-export function AvatarButton({ user, onClick, onSignOut, onSettings }: AvatarButtonProps) {
+export function AvatarButton({ user, onClick, onSignOut }: AvatarButtonProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -69,15 +68,6 @@ export function AvatarButton({ user, onClick, onSignOut, onSettings }: AvatarBut
 
           {/* Menu items */}
           <div className="p-1.5">
-            <button
-              onClick={() => { setMenuOpen(false); onSettings?.() }}
-              className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition-colors hover:bg-white/5"
-              style={{ color: "rgba(255,255,255,0.75)" }}
-              role="menuitem"
-            >
-              <Settings className="h-4 w-4" style={{ color: "rgba(255,255,255,0.4)" }} />
-              Settings
-            </button>
             <button
               onClick={() => { setMenuOpen(false); onSignOut() }}
               className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm transition-colors hover:bg-white/5"

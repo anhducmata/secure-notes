@@ -5,7 +5,7 @@ import useSWR from "swr"
 import { Plus, Search, ChevronLeft, Lock, Share2, Trash2, Brain, Send, Bot, User, Loader2, FileText, MessageSquare, Trash, Eye, EyeOff, Download, Play, Pause, X } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
-import { SettingsModal, getSonioxApiKey, getSilenceTimeout, getTranscriptionLang, getOpenAiApiKey, getDeepseekApiKey } from "@/components/settings-modal"
+import { getSonioxApiKey, getSilenceTimeout, getTranscriptionLang, getOpenAiApiKey, getDeepseekApiKey } from "@/components/settings-modal"
 import { PinLoginModal, storePinData, getPinData, removePinData } from "@/components/pin-login-modal"
 import {
   encryptNote,
@@ -207,7 +207,6 @@ export function NotesApp() {
   const [user, setUser] = useState<User | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [pinLoginOpen, setPinLoginOpen] = useState(false)
   const [hasPin, setHasPin] = useState(false)
   const [localNotes, setLocalNotes] = useState<DecryptedNoteWithMeta[]>([])
@@ -845,7 +844,6 @@ export function NotesApp() {
         user={user?.encryptionKey ? user : null}
         onClick={() => setAuthOpen(true)}
         onSignOut={handleSignOut}
-        onSettings={() => setSettingsOpen(true)}
       />
     </div>
   )
@@ -1113,14 +1111,6 @@ export function NotesApp() {
         {avatarButton}
 
         <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
-        <SettingsModal
-          isOpen={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          user={user}
-          onPinSet={handlePinSet}
-          hasPin={hasPin}
-          onPinRemove={handlePinRemove}
-        />
         <ShareModal
           isOpen={shareModalOpen}
           onClose={() => setShareModalOpen(false)}
@@ -1439,14 +1429,6 @@ export function NotesApp() {
       {avatarButton}
 
       <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
-      <SettingsModal
-        isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        user={user}
-        onPinSet={handlePinSet}
-        hasPin={hasPin}
-        onPinRemove={handlePinRemove}
-      />
       <ShareModal
         isOpen={shareModalOpen}
         onClose={() => setShareModalOpen(false)}
