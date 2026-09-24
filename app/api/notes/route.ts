@@ -1,17 +1,17 @@
 import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { redis } from "@/lib/redis"
-import { uploadNote, deleteNote } from "@/lib/s3"
+import { uploadNote, deleteNote } from "@/lib/blob"
 
 // Redis key for user's notes cache
 const NOTES_CACHE_KEY = (userId: string) => `notes:${userId}`
 
 /**
- * Note API - Encrypted Data Only (S3 Storage)
+ * Note API - Encrypted Data Only (Blob Storage)
  * 
  * This API ONLY handles encrypted note payloads.
  * The server never sees plaintext note content.
- * Notes are stored in S3, encrypted client-side before upload.
+ * Notes are stored in Blob, encrypted client-side before upload.
  * 
  * Each note is stored with encrypted title and content:
  * - encryptedData: { ciphertext, iv, salt, version }
@@ -119,7 +119,7 @@ export async function GET() {
 
 /**
  * POST /api/notes
- * Creates a new encrypted note in S3.
+ * Creates a new encrypted note in Blob.
  * REJECTS plaintext payloads.
  * Requires authentication.
  */
@@ -190,8 +190,8 @@ export async function POST(request: Request) {
     notes.unshift(note)
     await redis.set(cacheKey, JSON.stringify(notes))
     
-    // Also upload to S3 (backup storage)
-    uploadNote(userId, note.id, note).catch(err => console.error("[v0] S3 backup error:", err))
+    // Also upload to Blob (backup storage)
+    uploadNote(userId, note.id, note).catch(err => console.error("[v0] Blob backup error:", err))
 
     return NextResponse.json({ success: true, note, encrypted: true })
   } catch (err) {
@@ -202,7 +202,7 @@ export async function POST(request: Request) {
 
 /**
  * PUT /api/notes
- * Updates an encrypted note in S3.
+ * Updates an encrypted note in Blob.
  * REJECTS plaintext payloads.
  * Requires authentication.
  */
@@ -265,8 +265,8 @@ export async function PUT(request: Request) {
     }
     await redis.set(cacheKey, JSON.stringify(notes))
     
-    // Also upload to S3 (backup)
-    uploadNote(userId, updatedNote.id, updatedNote).catch(err => console.error("[v0] S3 backup error:", err))
+    // Also upload to Blob (backup)
+    uploadNote(userId, updatedNote.id, updatedNote).catch(err => console.error("[v0] Blob backup error:", err))
 
     return NextResponse.json({ success: true, note: updatedNote, encrypted: true })
   } catch (err) {
@@ -277,7 +277,7 @@ export async function PUT(request: Request) {
 
 /**
  * DELETE /api/notes
- * Deletes a note by ID from S3.
+ * Deletes a note by ID from Blob.
  * Requires authentication.
  */
 export async function DELETE(request: Request) {
@@ -307,8 +307,8 @@ export async function DELETE(request: Request) {
       await redis.set(cacheKey, JSON.stringify(notes))
     }
     
-    // Also delete from S3 (backup)
-    deleteNote(userId, noteId).catch(err => console.error("[v0] S3 delete error:", err))
+    // Also delete from Blob (backup)
+    deleteNote(userId, noteId).catch(err => console.error("[v0] Blob delete error:", err))
 
     return NextResponse.json({ success: true })
   } catch (err) {
