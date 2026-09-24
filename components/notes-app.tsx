@@ -228,7 +228,7 @@ export function NotesApp() {
   const [chatMessages, setChatMessages] = useState<Message[]>([WELCOME_MSG])
   const [chatInput, setChatInput] = useState("")
   const [chatLoading, setChatLoading] = useState(false)
-  const chatEndRef = useRef<HTMLDivElement>(null)
+  const chatScrollRef = useRef<HTMLDivElement>(null)
 
   // Snapshot of note content when recording starts — transcription appends to this
   const recordingBaseContentRef = useRef<string>("")
@@ -447,9 +447,18 @@ export function NotesApp() {
     }
   }, [activeTab, user?.encryptionKey])
 
-  // Scroll chat to bottom
+  // Keep the newest message around 60% of the chat viewport so it stays visible above the composer.
   useEffect(() => {
-    if (activeTab === "agent") chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    if (activeTab !== "agent") return
+    const scrollContainer = chatScrollRef.current
+    if (!scrollContainer) return
+
+    const frame = requestAnimationFrame(() => {
+      const targetScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight * 0.6)
+      scrollContainer.scrollTo({ top: targetScrollTop, behavior: "smooth" })
+    })
+
+    return () => cancelAnimationFrame(frame)
   }, [chatMessages, activeTab])
 
   const formatDate = (date: Date) => {
@@ -1051,8 +1060,8 @@ export function NotesApp() {
             ) : (
               /* Mobile agent view */
               <div className="flex flex-col flex-1 overflow-hidden">
-                <div className="flex-1 overflow-y-auto p-4 space-y-4 momentum-scroll">
-                  {chatMessages.map((msg) => (
+  <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 momentum-scroll">
+  {chatMessages.map((msg) => (
                     <div key={msg.id} className={`flex items-start gap-2 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
                       <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${msg.role === "user" ? "bg-zinc-800" : "bg-yellow-500 text-black"}`}>
                         {msg.role === "user" ? <User className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
@@ -1076,8 +1085,7 @@ export function NotesApp() {
                       </div>
                     </div>
                   )}
-                  <div ref={chatEndRef} />
-                </div>
+                                </div>
                 <div className="px-4 py-3 border-t border-zinc-800 bg-zinc-900/30 pb-24">
                   <form onSubmit={(e) => { e.preventDefault(); handleChatSend() }} className="relative flex items-center">
                     <input
@@ -1345,8 +1353,8 @@ export function NotesApp() {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-5 momentum-scroll">
-              {chatMessages.map((msg) => (
+  <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-6 space-y-5 momentum-scroll">
+  {chatMessages.map((msg) => (
                 <div key={msg.id} className={`flex items-start gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
                   <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${msg.role === "user" ? "bg-zinc-800 text-white" : "bg-yellow-500 text-black"}`}>
                     {msg.role === "user" ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
@@ -1389,8 +1397,7 @@ export function NotesApp() {
                   </div>
                 </div>
               )}
-              <div ref={chatEndRef} />
-            </div>
+                        </div>
 
             {/* Input */}
             <div className="px-6 py-4 border-t border-zinc-800/50 bg-zinc-900/30">
