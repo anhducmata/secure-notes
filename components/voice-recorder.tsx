@@ -263,7 +263,7 @@ export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onT
   }, [apiKey, silenceTimeoutSec, cleanup])
 
   const startRecording = useCallback(async () => {
-    if (!apiKey) { setError("Set Soniox API key in Settings first"); setTimeout(() => setError(null), 3500); return }
+    if (!apiKey) { setError("Soniox API key is not configured"); setTimeout(() => setError(null), 3500); return }
     setError(null)
 
     try {

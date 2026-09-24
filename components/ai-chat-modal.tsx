@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import { X, Send, Brain, Bot, User, Loader2, FileText, Trash2, Plus, MessageSquare, PanelLeftClose, PanelLeftOpen, Paperclip, Image, Music, XCircle } from "lucide-react"
-import { getAIModel } from "@/components/settings-modal"
+import { getAIModel } from "@/lib/user-settings"
 
 export interface Citation {
   index: number

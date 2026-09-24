@@ -5,7 +5,7 @@ import useSWR from "swr"
 import { Plus, Search, ChevronLeft, Lock, Share2, Trash2, Brain, Send, Bot, User, Loader2, FileText, MessageSquare, Trash, Eye, EyeOff, Download, Play, Pause, X } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
-import { getSonioxApiKey, getSilenceTimeout, getTranscriptionLang, getOpenAiApiKey, getDeepseekApiKey } from "@/components/settings-modal"
+import { getSonioxApiKey, getSilenceTimeout, getTranscriptionLang, getOpenAiApiKey, getDeepseekApiKey } from "@/lib/user-settings"
 import { PinLoginModal, storePinData, getPinData, removePinData } from "@/components/pin-login-modal"
 import {
   encryptNote,
@@ -836,7 +836,7 @@ export function NotesApp() {
     }
   }
 
-  // ── Shared UI fragments ───────────────────────────────────────────────────
+  // ── Shared UI fragments ─────���─────────────────────────────────────────────
 
   const avatarButton = (
     <div className="absolute bottom-5 left-5 z-20">
