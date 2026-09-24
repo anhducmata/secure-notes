@@ -57,6 +57,15 @@ class LocalRedis {
     return "OK"
   }
 
+  async getdel(key: string): Promise<string | null> {
+    const db = readDB()
+    const entry = db.keys[key]
+    if (!entry || isExpired(entry)) return null
+    delete db.keys[key]
+    writeDB(db)
+    return entry.value
+  }
+
   async del(...keys: string[]): Promise<number> {
     const db = readDB()
     let count = 0

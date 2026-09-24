@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { AlertCircle, Loader2, Lock, Copy, Check } from "lucide-react"
 import { importShareKey, decryptFromShare } from "@/lib/crypto"
 
@@ -17,6 +17,7 @@ export default function SharedNotePage({ params }: { params: Promise<{ shareId: 
   const [shareId, setShareId] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [autoCopied, setAutoCopied] = useState(false)
+  const fetchedShareIds = useRef(new Set<string>())
 
   // Unwrap params
   useEffect(() => {
@@ -52,7 +53,8 @@ export default function SharedNotePage({ params }: { params: Promise<{ shareId: 
 
   // Fetch and decrypt the shared note (one-time)
   useEffect(() => {
-    if (!shareId) return
+    if (!shareId || fetchedShareIds.current.has(shareId)) return
+    fetchedShareIds.current.add(shareId)
 
     const fetchNote = async () => {
       try {

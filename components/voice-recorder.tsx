@@ -9,7 +9,6 @@ const BUFFER_SIZE = 4096
 const SILENCE_THRESHOLD = 0.005
 
 interface VoiceRecorderProps {
-  apiKey: string
   lang?: string
   silenceTimeoutSec?: number
   onTranscriptUpdate: (fullTranscript: string) => void
@@ -40,7 +39,7 @@ interface Pipeline {
 }
 
 
-export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onTranscriptUpdate, onRecordingStart, onRecordingStop }: VoiceRecorderProps) {
+export function VoiceRecorder({ lang = "en", silenceTimeoutSec = 30, onTranscriptUpdate, onRecordingStart, onRecordingStop }: VoiceRecorderProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [hasSystemAudio, setHasSystemAudio] = useState(false)
@@ -174,7 +173,7 @@ export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onT
     setIsPaused(false)
   }, [])
 
-  const makePipeline = useCallback((stream: MediaStream): Pipeline => {
+  const makePipeline = useCallback((stream: MediaStream, temporaryApiKey: string): Pipeline => {
     const ctx = new AudioContext({ sampleRate: SAMPLE_RATE })
     const processor = ctx.createScriptProcessor(BUFFER_SIZE, 1, 1)
     ctx.createMediaStreamSource(stream).connect(processor)
@@ -192,7 +191,7 @@ export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onT
 
     ws.onopen = () => {
       ws.send(JSON.stringify({
-        api_key: apiKey,
+        api_key: temporaryApiKey,
         model: "stt-rt-v4",
         audio_format: "pcm_s16le",
         sample_rate: SAMPLE_RATE,
@@ -260,19 +259,24 @@ export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onT
     }
 
     return pipeline
-  }, [apiKey, silenceTimeoutSec, cleanup])
+  }, [lang, silenceTimeoutSec, cleanup])
 
   const startRecording = useCallback(async () => {
-    if (!apiKey) { setError("Set Soniox API key in Settings first"); setTimeout(() => setError(null), 3500); return }
     setError(null)
 
     try {
+      const tokenResponse = await fetch("/api/soniox/token", { method: "POST" })
+      const tokenData = await tokenResponse.json()
+      if (!tokenResponse.ok || !tokenData.apiKey) {
+        throw new Error(tokenData.error || "Soniox transcription is not configured")
+      }
+      const temporaryApiKey = tokenData.apiKey
       let micStarted = false
       let sysStarted = false
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-        micPipelineRef.current = makePipeline(stream)
+        micPipelineRef.current = makePipeline(stream, temporaryApiKey)
         micStarted = true
       } catch {
         // Continue with system audio when microphone permission is unavailable.
@@ -286,7 +290,7 @@ export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onT
         displayStream.getVideoTracks().forEach((t: MediaStreamTrack) => t.stop())
         const audioTracks = displayStream.getAudioTracks().filter((t: MediaStreamTrack) => t.readyState === "live")
         if (audioTracks.length > 0) {
-          sysPipelineRef.current = makePipeline(new MediaStream(audioTracks))
+          sysPipelineRef.current = makePipeline(new MediaStream(audioTracks), temporaryApiKey)
           setHasSystemAudio(true)
           sysStarted = true
         }
@@ -301,7 +305,7 @@ export function VoiceRecorder({ apiKey, lang = "en", silenceTimeoutSec = 30, onT
       setError(err?.message || "Failed to access audio")
       cleanup()
     }
-  }, [apiKey, onRecordingStart, cleanup, makePipeline])
+  }, [onRecordingStart, cleanup, makePipeline])
 
   return (
     <div className="flex items-center gap-1">

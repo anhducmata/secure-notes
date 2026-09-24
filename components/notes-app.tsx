@@ -1,11 +1,11 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import React, { useState, useEffect, useCallback, useRef } from "react"
 import useSWR from "swr"
 import { Plus, Search, ChevronLeft, Lock, Share2, Trash2, Brain, Send, Bot, User, Loader2, FileText, MessageSquare, Trash, Eye, EyeOff, Download, Play, Pause, X } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
-import { getSonioxApiKey, getSilenceTimeout, getTranscriptionLang, getOpenAiApiKey, getDeepseekApiKey } from "@/components/settings-modal"
+import { getSilenceTimeout, getTranscriptionLang, getOpenAiApiKey, getDeepseekApiKey } from "@/lib/user-settings"
 import { PinLoginModal, storePinData, getPinData, removePinData } from "@/components/pin-login-modal"
 import {
   encryptNote,
@@ -82,12 +82,24 @@ function formatRelativeTime(iso: string) {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
+function colorizeTranscriptLabels(children: React.ReactNode): React.ReactNode {
+  return React.Children.map(children, (child) => {
+    if (typeof child !== "string") return child
+    const parts = child.split(/(Other:)/g)
+    return parts.map((part, index) =>
+      part === "Other:"
+        ? <span key={`other-label-${index}`} className="text-yellow-400 font-medium">{part}</span>
+        : part,
+    )
+  })
+}
+
 function MarkdownContent({ content }: { content: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{colorizeTranscriptLabels(children)}</p>,
         h1: ({ children }) => <h1 className="text-lg font-bold mb-2 mt-3 first:mt-0">{children}</h1>,
         h2: ({ children }) => <h2 className="text-base font-bold mb-2 mt-3 first:mt-0">{children}</h2>,
         h3: ({ children }) => <h3 className="text-sm font-bold mb-1 mt-2 first:mt-0">{children}</h3>,
@@ -219,7 +231,6 @@ export function NotesApp() {
   const [pendingChanges, setPendingChanges] = useState<DecryptedNoteWithMeta | null>(null)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [limitError, setLimitError] = useState<string | null>(null)
-  const [sonioxApiKey, setSonioxApiKey] = useState("")
   const [silenceTimeoutSec] = useState(() => getSilenceTimeout())
   const [transcriptionLang, setTranscriptionLang] = useState("en")
 
@@ -229,7 +240,7 @@ export function NotesApp() {
   const [chatMessages, setChatMessages] = useState<Message[]>([WELCOME_MSG])
   const [chatInput, setChatInput] = useState("")
   const [chatLoading, setChatLoading] = useState(false)
-  const chatEndRef = useRef<HTMLDivElement>(null)
+  const chatScrollRef = useRef<HTMLDivElement>(null)
 
   // Snapshot of note content when recording starts — transcription appends to this
   const recordingBaseContentRef = useRef<string>("")
@@ -421,9 +432,7 @@ export function NotesApp() {
     return () => window.removeEventListener("resize", check)
   }, [])
 
-  // Load Soniox API key from localStorage
   useEffect(() => {
-    setSonioxApiKey(getSonioxApiKey())
     setTranscriptionLang(getTranscriptionLang())
   }, [])
 
@@ -450,9 +459,18 @@ export function NotesApp() {
     }
   }, [activeTab, user?.encryptionKey])
 
-  // Scroll chat to bottom
+  // Keep the newest message around 60% of the chat viewport so it stays visible above the composer.
   useEffect(() => {
-    if (activeTab === "agent") chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    if (activeTab !== "agent") return
+    const scrollContainer = chatScrollRef.current
+    if (!scrollContainer) return
+
+    const frame = requestAnimationFrame(() => {
+      const targetScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight * 0.6)
+      scrollContainer.scrollTo({ top: targetScrollTop, behavior: "smooth" })
+    })
+
+    return () => cancelAnimationFrame(frame)
   }, [chatMessages, activeTab])
 
   const formatDate = (date: Date) => {
@@ -651,8 +669,6 @@ export function NotesApp() {
   // Voice recorder handlers
   const handleRecordingStart = useCallback(() => {
     recordingBaseContentRef.current = selectedNote?.content ?? ""
-    // Refresh API key from storage each time recording starts (user may have updated it)
-    setSonioxApiKey(getSonioxApiKey())
     setTranscriptionLang(getTranscriptionLang())
 
     // Auto-title new notes with recording timestamp
@@ -836,7 +852,7 @@ export function NotesApp() {
     }
   }
 
-  // ── Shared UI fragments ───────────────────────────────────────────────────
+  // ── Shared UI fragments ─────���─────────────────────────────────────────────
 
   const avatarButton = (
     <div className="absolute bottom-5 left-5 z-20">
@@ -912,8 +928,7 @@ export function NotesApp() {
                 </button>
                 <div className="flex items-center gap-1">
                   <VoiceRecorder
-                    apiKey={sonioxApiKey}
-                    lang={transcriptionLang}
+                              lang={transcriptionLang}
                     silenceTimeoutSec={silenceTimeoutSec}
                     onTranscriptUpdate={handleTranscriptUpdate}
                     onRecordingStart={handleRecordingStart}
@@ -1057,8 +1072,8 @@ export function NotesApp() {
             ) : (
               /* Mobile agent view */
               <div className="flex flex-col flex-1 overflow-hidden">
-                <div className="flex-1 overflow-y-auto p-4 space-y-4 momentum-scroll">
-                  {chatMessages.map((msg) => (
+  <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 momentum-scroll">
+  {chatMessages.map((msg) => (
                     <div key={msg.id} className={`flex items-start gap-2 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
                       <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${msg.role === "user" ? "bg-zinc-800" : "bg-yellow-500 text-black"}`}>
                         {msg.role === "user" ? <User className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
@@ -1082,8 +1097,7 @@ export function NotesApp() {
                       </div>
                     </div>
                   )}
-                  <div ref={chatEndRef} />
-                </div>
+                                </div>
                 <div className="px-4 py-3 border-t border-zinc-800 bg-zinc-900/30 pb-24">
                   <form onSubmit={(e) => { e.preventDefault(); handleChatSend() }} className="relative flex items-center">
                     <input
@@ -1249,8 +1263,7 @@ export function NotesApp() {
                   />
                   <div className="flex items-center gap-1 ml-4">
                     <VoiceRecorder
-                      apiKey={sonioxApiKey}
-                      lang={transcriptionLang}
+                                  lang={transcriptionLang}
                       silenceTimeoutSec={silenceTimeoutSec}
                       onTranscriptUpdate={handleTranscriptUpdate}
                       onRecordingStart={handleRecordingStart}
@@ -1352,8 +1365,8 @@ export function NotesApp() {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-5 momentum-scroll">
-              {chatMessages.map((msg) => (
+  <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-6 space-y-5 momentum-scroll">
+  {chatMessages.map((msg) => (
                 <div key={msg.id} className={`flex items-start gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
                   <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${msg.role === "user" ? "bg-zinc-800 text-white" : "bg-yellow-500 text-black"}`}>
                     {msg.role === "user" ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
@@ -1396,8 +1409,7 @@ export function NotesApp() {
                   </div>
                 </div>
               )}
-              <div ref={chatEndRef} />
-            </div>
+                        </div>
 
             {/* Input */}
             <div className="px-6 py-4 border-t border-zinc-800/50 bg-zinc-900/30">
