@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import React, { useState, useEffect, useCallback, useRef } from "react"
 import useSWR from "swr"
 import { Plus, Search, ChevronLeft, Lock, Share2, Trash2, Brain, Send, Bot, User, Loader2, FileText, MessageSquare, Trash, Eye, EyeOff, Download, Play, Pause, X } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
@@ -82,12 +82,24 @@ function formatRelativeTime(iso: string) {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
+function colorizeTranscriptLabels(children: React.ReactNode): React.ReactNode {
+  return React.Children.map(children, (child) => {
+    if (typeof child !== "string") return child
+    const parts = child.split(/(Other:)/g)
+    return parts.map((part, index) =>
+      part === "Other:"
+        ? <span key={`other-label-${index}`} className="text-yellow-400 font-medium">{part}</span>
+        : part,
+    )
+  })
+}
+
 function MarkdownContent({ content }: { content: string }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{colorizeTranscriptLabels(children)}</p>,
         h1: ({ children }) => <h1 className="text-lg font-bold mb-2 mt-3 first:mt-0">{children}</h1>,
         h2: ({ children }) => <h2 className="text-base font-bold mb-2 mt-3 first:mt-0">{children}</h2>,
         h3: ({ children }) => <h3 className="text-sm font-bold mb-1 mt-2 first:mt-0">{children}</h3>,
