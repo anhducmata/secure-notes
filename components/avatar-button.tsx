@@ -10,7 +10,7 @@ interface AvatarButtonProps {
   onSettings: () => void
 }
 
-export function AvatarButton({ user, onClick, onSignOut }: AvatarButtonProps) {
+export function AvatarButton({ user, onClick, onSignOut, onSettings }: AvatarButtonProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
