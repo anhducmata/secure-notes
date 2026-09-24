@@ -5,6 +5,7 @@ import useSWR from "swr"
 import { Plus, Search, ChevronLeft, Lock, Share2, Trash2, Brain, Send, Bot, User, Loader2, FileText, MessageSquare, Trash, Eye, EyeOff, Download, Play, Pause, X } from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
+import { SettingsModal } from "@/components/settings-modal"
 import { getSilenceTimeout, getTranscriptionLang, getOpenAiApiKey, getDeepseekApiKey } from "@/lib/user-settings"
 import { PinLoginModal, storePinData, getPinData, removePinData } from "@/components/pin-login-modal"
 import {
@@ -218,6 +219,7 @@ function renderWithCitations(
 export function NotesApp() {
   const [user, setUser] = useState<User | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [pinLoginOpen, setPinLoginOpen] = useState(false)
   const [hasPin, setHasPin] = useState(false)
@@ -859,7 +861,13 @@ export function NotesApp() {
       <AvatarButton
         user={user?.encryptionKey ? user : null}
         onClick={() => setAuthOpen(true)}
+        onSettings={() => setSettingsOpen(true)}
         onSignOut={handleSignOut}
+      />
+      <SettingsModal
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        userEmail={user?.email || ""}
       />
     </div>
   )
