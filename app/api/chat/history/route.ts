@@ -1,23 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
-import { cookies } from "next/headers"
 import { redis } from "@/lib/redis"
 import { CONVS_KEY, CONV_KEY } from "@/lib/chat-keys"
-
-async function getAuthenticatedUserId(): Promise<string | null> {
-  const cookieStore = await cookies()
-  const sessionToken = cookieStore.get("session")?.value
-  if (!sessionToken) return null
-  const rawSessionData = await redis.get(`session:${sessionToken}`)
-  if (!rawSessionData) return null
-  const sessionData = typeof rawSessionData === "string" ? JSON.parse(rawSessionData) : rawSessionData
-  return sessionData.email
-}
+import { getAuthenticatedUser } from "@/lib/auth"
 
 // GET /api/chat/history          → list of conversations
 // GET /api/chat/history?id=xxx   → messages for a conversation
 export async function GET(req: NextRequest) {
-  const userId = await getAuthenticatedUserId()
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const user = await getAuthenticatedUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const userId = user.email
 
   const convId = req.nextUrl.searchParams.get("id")
 
@@ -34,8 +25,9 @@ export async function GET(req: NextRequest) {
 
 // DELETE /api/chat/history?id=xxx  → delete a specific conversation
 export async function DELETE(req: NextRequest) {
-  const userId = await getAuthenticatedUserId()
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const user = await getAuthenticatedUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const userId = user.email
 
   const convId = req.nextUrl.searchParams.get("id")
   if (!convId) return NextResponse.json({ error: "Missing id" }, { status: 400 })

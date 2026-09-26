@@ -125,17 +125,6 @@ export function AiChatModal({ isOpen, onClose, notes, onJumpToNote }: AiChatModa
       .finally(() => setHistoryLoading(false))
   }, [isOpen])
 
-  // Re-index notes when modal opens
-  useEffect(() => {
-    if (!isOpen || notes.length === 0) return
-    fetch("/api/notes/index", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ notes }),
-    }).catch(() => {})
-  }, [isOpen])
-
   const loadConversation = useCallback(async (convId: string) => {
     setActiveConvId(convId)
     setMessages([WELCOME])

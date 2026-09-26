@@ -1,28 +1,41 @@
+/**
+ * AI Memory Agent (Find, Understand, Connect, Recall)
+ * Performs hybrid retrieval (BM25 + pgvector via RRF) across notes, audio transcripts,
+ * and attached documents, citing exact note IDs and audio timestamps.
+ */
+
 import { NextRequest, NextResponse } from "next/server"
-import { cookies } from "next/headers"
 import { redis } from "@/lib/redis"
-import { vectorIndex } from "@/lib/vector"
-import { ENTITY_KEY, type EntityStore } from "@/lib/entities"
-import OpenAI from "openai"
-import { toFile } from "openai"
+import { getAuthenticatedUser } from "@/lib/auth"
+import { hybridSearch } from "@/lib/search"
+import { SpeakerRepository } from "@/lib/db/repositories"
+import { formatMsToTime } from "@/lib/ingestion/markdown-generator"
+import { parseDocx } from "@/lib/ingestion/docx"
+import { parseCsv } from "@/lib/ingestion/csv"
+import { extractTextFromImage } from "@/lib/ingestion/ocr"
+import OpenAI, { toFile } from "openai"
 import { CONVS_KEY, CONV_KEY } from "@/lib/chat-keys"
+import { memoryAgent } from "@/lib/agent"
 
 function getClient(provider: "openai" | "deepseek", reqHeaders: Headers) {
   if (provider === "deepseek") {
     return new OpenAI({
       apiKey: reqHeaders.get("x-deepseek-key") || process.env.DEEPSEEK_API_KEY || "dummy-key",
       baseURL: "https://api.deepseek.com",
-    });
+    })
   }
   return new OpenAI({
     apiKey: reqHeaders.get("x-openai-key") || process.env.OPENAI_API_KEY || "dummy-key",
-  });
+  })
 }
 
 function clientForModel(model: string, reqHeaders: Headers) {
   return model.startsWith("deepseek") ? getClient("deepseek", reqHeaders) : getClient("openai", reqHeaders)
 }
 
+/**
+ * Extracts content from attached files using open-source parsers (DOCX, CSV, OCR)
+ */
 async function processAttachments(files: File[], reqHeaders: Headers): Promise<string> {
   if (files.length === 0) return ""
   const parts: string[] = []
@@ -44,33 +57,34 @@ async function processAttachments(files: File[], reqHeaders: Headers): Promise<s
       } catch (e) {
         parts.push(`[Audio file: ${name}]\n(Transcription failed)`)
       }
+    } else if (name.endsWith(".docx")) {
+      try {
+        const ab = await file.arrayBuffer()
+        const parsed = parseDocx(Buffer.from(ab))
+        parts.push(`[DOCX Document: ${name}]\n${parsed.markdown.slice(0, 5000)}`)
+      } catch (e) {
+        parts.push(`[DOCX Document: ${name}]\n(Parsing failed)`)
+      }
+    } else if (name.endsWith(".csv") || mime === "text/csv") {
+      try {
+        const text = await file.text()
+        const parsed = parseCsv(text, 100)
+        parts.push(`[CSV Data Table: ${name}]\n${parsed.markdownTable}`)
+      } catch (e) {
+        parts.push(`[CSV Table: ${name}]\n(Parsing failed)`)
+      }
     } else if (mime.startsWith("image/")) {
       try {
-        const arrayBuffer = await file.arrayBuffer()
-        const base64 = Buffer.from(arrayBuffer).toString("base64")
-        const dataUrl = `data:${mime};base64,${base64}`
-        const result = await getClient("openai", reqHeaders).chat.completions.create({
-          model: "gpt-5.5",
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: "Describe this image in detail. Include any text, data, people, objects, or relevant context visible." },
-                { type: "image_url", image_url: { url: dataUrl } },
-              ],
-            },
-          ],
-          max_tokens: 500,
-        })
-        const description = result.choices[0]?.message?.content ?? "(No description)"
-        parts.push(`[Image file: ${name}]\nDescription:\n${description}`)
+        const ab = await file.arrayBuffer()
+        const ocr = await extractTextFromImage(Buffer.from(ab), mime)
+        parts.push(`[Image: ${name} (OCR: ${ocr.engine})]\n${ocr.text}`)
       } catch (e) {
-        parts.push(`[Image file: ${name}]\n(Image analysis failed)`)
+        parts.push(`[Image: ${name}]\n(OCR extraction failed)`)
       }
     } else {
       try {
         const text = await file.text()
-        parts.push(`[Text file: ${name}]\nContent:\n${text.slice(0, 3000)}${text.length > 3000 ? "\n...(truncated)" : ""}`)
+        parts.push(`[Text file: ${name}]\n${text.slice(0, 4000)}`)
       } catch (e) {
         parts.push(`[File: ${name}]\n(Could not read content)`)
       }
@@ -80,236 +94,86 @@ async function processAttachments(files: File[], reqHeaders: Headers): Promise<s
   return parts.join("\n\n")
 }
 
-async function getAuthenticatedUserId(): Promise<string | null> {
-  const cookieStore = await cookies()
-  const sessionToken = cookieStore.get("session")?.value
-  if (!sessionToken) return null
-  const rawSessionData = await redis.get(`session:${sessionToken}`)
-  if (!rawSessionData) return null
-  const sessionData = typeof rawSessionData === "string" ? JSON.parse(rawSessionData) : rawSessionData
-  return sessionData.email
-}
-
-async function getEntityStore(userId: string): Promise<EntityStore | null> {
-  const raw = await redis.get(ENTITY_KEY(userId))
-  if (!raw) return null
-  return typeof raw === "string" ? JSON.parse(raw) : raw
-}
-
-/** Ask DeepSeek to decompose the question into targeted search queries + entity lookups */
-async function planRetrieval(question: string, conversationHistory: { role: string; content: string }[], reqHeaders: Headers): Promise<{
-  queries: string[]
-  peopleToLookup: string[]
-  projectsToLookup: string[]
-  intent: string
-}> {
-  const historySnippet = conversationHistory.slice(-4).map(m => `${m.role}: ${m.content}`).join("\n")
-  const response = await getClient("deepseek", reqHeaders).chat.completions.create({
-    model: "deepseek-chat",
-    temperature: 0,
-    messages: [
-      {
-        role: "system",
-        content: `You are a retrieval planner. Given a user question, output a JSON plan for how to retrieve relevant information from the user's personal knowledge base (notes, people, projects, conversations).`,
-      },
-      {
-        role: "user",
-        content: `Recent conversation:
-${historySnippet || "(none)"}
-
-User question: "${question}"
-
-Return ONLY valid JSON (no markdown):
-{
-  "intent": "one of: person_lookup | project_lookup | conversation_search | general_search | mixed",
-  "queries": ["2-3 semantic search queries to run against notes, each focusing on a different angle"],
-  "peopleToLookup": ["exact or partial names of people to fetch from entity store"],
-  "projectsToLookup": ["exact or partial project names to fetch from entity store"]
-}`,
-      },
-    ],
-  })
-
-  const raw = response.choices[0]?.message?.content ?? "{}"
-  const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim()
-  try {
-    return JSON.parse(cleaned)
-  } catch {
-    return { queries: [question], peopleToLookup: [], projectsToLookup: [], intent: "general_search" }
-  }
-}
-
-/** Run multiple vector searches in parallel and dedupe results */
-async function multiSearch(userId: string, queries: string[]) {
-  const results = await Promise.all(
-    queries.map((q) =>
-      vectorIndex.query({ data: q, topK: 4, includeMetadata: true, filter: `userId = '${userId}'` })
-    )
-  )
-
-  const seen = new Set<string>()
-  const deduped: typeof results[0] = []
-  for (const batch of results) {
-    for (const r of batch) {
-      if (!seen.has(r.id as string)) {
-        seen.add(r.id as string)
-        deduped.push(r)
-      }
-    }
-  }
-  return deduped.sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 8)
-}
-
-/** Extract relevant entity context from the entity store */
-function buildEntityContext(
-  store: EntityStore | null,
-  peopleToLookup: string[],
-  projectsToLookup: string[]
-): string {
-  if (!store) return ""
-  const parts: string[] = []
-
-  if (peopleToLookup.length > 0) {
-    for (const query of peopleToLookup) {
-      const q = query.toLowerCase()
-      const matches = Object.values(store.people).filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.aliases.some((a) => a.toLowerCase().includes(q))
-      )
-      for (const person of matches) {
-        const recentMentions = person.mentions.slice(-3).map((m) => `  - [${m.noteTitle}]: ${m.snippet}`).join("\n")
-        parts.push(`PERSON: ${person.name}
-  Role: ${person.role}
-  Organization: ${person.organization}
-  Aliases: ${person.aliases.join(", ") || "none"}
-  Recent mentions:\n${recentMentions}`)
-      }
-    }
-  }
-
-  if (projectsToLookup.length > 0) {
-    for (const query of projectsToLookup) {
-      const q = query.toLowerCase()
-      const matches = Object.values(store.projects).filter((p) =>
-        p.name.toLowerCase().includes(q)
-      )
-      for (const project of matches) {
-        const recentMentions = project.mentions.slice(-3).map((m) => `  - [${m.noteTitle}]: ${m.snippet}`).join("\n")
-        parts.push(`PROJECT: ${project.name}
-  Description: ${project.description}
-  Status: ${project.status}
-  Team: ${project.team.join(", ") || "unknown"}
-  Recent mentions:\n${recentMentions}`)
-      }
-    }
-  }
-
-  // Also include recent conversations if relevant
-  if (store.conversations.length > 0 && (peopleToLookup.length > 0 || projectsToLookup.length > 0)) {
-    const allNames = [...peopleToLookup, ...projectsToLookup].map((n) => n.toLowerCase())
-    const relevantConvs = store.conversations.filter((c) =>
-      allNames.some(
-        (n) =>
-          c.participants.some((p) => p.toLowerCase().includes(n)) ||
-          c.topic.toLowerCase().includes(n) ||
-          c.summary.toLowerCase().includes(n)
-      )
-    ).slice(-5)
-
-    for (const conv of relevantConvs) {
-      parts.push(`CONVERSATION in [${conv.noteTitle}]:
-  Participants: ${conv.participants.join(", ")}
-  Topic: ${conv.topic}
-  Summary: ${conv.summary}`)
-    }
-  }
-
-  return parts.join("\n\n")
-}
-
 export async function POST(req: NextRequest) {
   try {
-    const userId = await getAuthenticatedUserId()
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    const user = await getAuthenticatedUser()
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
 
-    let question: string, conversationHistory: { role: "user" | "assistant"; content: string; citations?: unknown[] }[], conversationId: string, files: File[], selectedModel: string
+    let question: string,
+      conversationHistory: { role: "user" | "assistant"; content: string; citations?: unknown[] }[],
+      conversationId: string,
+      files: File[],
+      selectedModel: string,
+      scopeInput: any = undefined
 
     const contentType = req.headers.get("content-type") ?? ""
     if (contentType.includes("multipart/form-data")) {
       const form = await req.formData()
-      question = form.get("question") as string ?? ""
-      conversationHistory = JSON.parse(form.get("conversationHistory") as string ?? "[]")
-      conversationId = form.get("conversationId") as string ?? ""
-      selectedModel = form.get("model") as string ?? "gpt-5.5"
+      question = (form.get("question") as string) ?? ""
+      conversationHistory = JSON.parse((form.get("conversationHistory") as string) ?? "[]")
+      conversationId = (form.get("conversationId") as string) ?? ""
+      selectedModel = (form.get("model") as string) ?? "gpt-5.5"
       files = form.getAll("files") as File[]
+      const rawScope = form.get("scope") as string | null
+      if (rawScope) {
+        try {
+          scopeInput = JSON.parse(rawScope)
+        } catch {}
+      }
     } else {
       const body = await req.json()
       question = body.question
-      conversationHistory = body.conversationHistory
-      conversationId = body.conversationId
+      conversationHistory = body.conversationHistory || []
+      conversationId = body.conversationId || ""
       selectedModel = body.model ?? "gpt-5.5"
       files = []
+      scopeInput = body.scope
+    }
+
+    if (!conversationId) {
+      conversationId = `conv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
     }
 
     const cleanHistory = conversationHistory.map(({ role, content }) => ({ role, content }))
 
-    // Process any attached files
+    // Process any attached query files
     const attachmentContext = await processAttachments(files, req.headers)
+    const effectiveQuestion = attachmentContext ? `${attachmentContext}\n\nUser Question:\n${question}` : question
 
-    // Step 1: Plan retrieval
-    const plan = await planRetrieval(question, cleanHistory, req.headers)
+    const apiKey = req.headers.get("x-openai-key") || process.env.OPENAI_API_KEY
+    const deepseekApiKey = req.headers.get("x-deepseek-key") || process.env.DEEPSEEK_API_KEY
+    const provider = selectedModel.startsWith("deepseek") ? "deepseek" : "openai"
 
-    // Step 2: Parallel — vector search + entity store lookup
-    const [vectorResults, entityStore] = await Promise.all([
-      multiSearch(userId, plan.queries.length > 0 ? plan.queries : [question]),
-      getEntityStore(userId),
-    ])
-
-    // Step 3: Build context
-    const citableResults = vectorResults.filter((r) => r.metadata)
-    const citations = citableResults.map((r, i) => {
-      const meta = r.metadata as { noteId: string; title: string; snippet: string }
-      return { index: i + 1, noteId: meta.noteId, title: meta.title }
-    })
-
-    const notesContext = citableResults
-      .map((r, i) => {
-        const meta = r.metadata as { title: string; snippet: string }
-        return `[${i + 1}] ${meta.title}\n${meta.snippet}`
-      })
-      .join("\n\n")
-
-    const entityContext = buildEntityContext(entityStore, plan.peopleToLookup, plan.projectsToLookup)
-
-    const systemPrompt = `You are a personal knowledge assistant. Always respond in clear, natural English — concise and direct. Do NOT respond in Vietnamese unless explicitly asked.
-
-When you reference info from a note, cite inline like [1], [2], etc. Don't fabricate info not found in the context below.
-
-${attachmentContext ? `--- ATTACHED FILES ---\n${attachmentContext}\n\n` : ""}${entityContext ? `--- STRUCTURED KNOWLEDGE ---\n${entityContext}\n\n` : ""}${notesContext ? `--- RELEVANT NOTES ---\n${notesContext}` : "No relevant notes found — let the user know briefly."}`
-
-    // Step 4: Answer (streaming)
-    const answerClient = clientForModel(selectedModel, req.headers)
-    const stream = await answerClient.chat.completions.create({
+    const stream = memoryAgent.streamQuery(user.id, effectiveQuestion, {
+      scope: scopeInput,
+      conversationHistory: cleanHistory,
+      apiKey,
+      deepseekApiKey,
+      provider,
       model: selectedModel,
-      stream: true,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...cleanHistory,
-        { role: "user", content: question },
-      ],
     })
 
     const encoder = new TextEncoder()
     const readable = new ReadableStream({
       async start(controller) {
         let fullAnswer = ""
+        let verifiedCitations: any[] = []
+
         try {
           for await (const chunk of stream) {
-            const delta = chunk.choices[0]?.delta?.content ?? ""
-            if (delta) {
-              fullAnswer += delta
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`))
+            if (chunk.delta) {
+              fullAnswer += chunk.delta
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta: chunk.delta })}\n\n`))
+            }
+            if (chunk.done) {
+              verifiedCitations = chunk.citations || []
+            }
+            if (chunk.error) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: true })}\n\n`))
+              controller.close()
+              return
             }
           }
         } catch (err) {
@@ -318,27 +182,46 @@ ${attachmentContext ? `--- ATTACHED FILES ---\n${attachmentContext}\n\n` : ""}${
           return
         }
 
+        // Format citations for client compatibility
+        const clientCitations = verifiedCitations.map((c) => ({
+          index: c.index,
+          title: c.title,
+          noteId: c.sourceId,
+          sourceType: c.sourceType,
+          sourceId: c.sourceId,
+          timestamp: c.timestamp,
+          startMs: c.startMs,
+          endMs: c.endMs,
+          speaker: c.speakerName,
+          speakerName: c.speakerName,
+          deepLink: c.deepLink,
+          snippet: c.snippet,
+        }))
+
         // Send citations in final event
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, citations })}\n\n`))
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true, citations: clientCitations })}\n\n`))
 
         // Persist conversation
         const updatedHistory = [
           ...conversationHistory,
           { role: "user" as const, content: question },
-          { role: "assistant" as const, content: fullAnswer, citations },
+          { role: "assistant" as const, content: fullAnswer, citations: clientCitations },
         ]
-        await redis.set(CONV_KEY(userId, conversationId), JSON.stringify(updatedHistory))
+        await redis.set(CONV_KEY(user.email, conversationId), JSON.stringify(updatedHistory))
 
-        const raw = await redis.get(CONVS_KEY(userId))
-        const convs: { id: string; title: string; updatedAt: string }[] =
-          raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : []
+        const raw = await redis.get(CONVS_KEY(user.email))
+        const convs: { id: string; title: string; updatedAt: string }[] = raw
+          ? typeof raw === "string"
+            ? JSON.parse(raw)
+            : raw
+          : []
         const existing = convs.find((c) => c.id === conversationId)
         const title = existing?.title ?? question.slice(0, 60)
         const updatedConvs = [
           { id: conversationId, title, updatedAt: new Date().toISOString() },
           ...convs.filter((c) => c.id !== conversationId),
         ]
-        await redis.set(CONVS_KEY(userId), JSON.stringify(updatedConvs))
+        await redis.set(CONVS_KEY(user.email), JSON.stringify(updatedConvs))
 
         controller.close()
       },
@@ -353,6 +236,6 @@ ${attachmentContext ? `--- ATTACHED FILES ---\n${attachmentContext}\n\n` : ""}${
     })
   } catch (err) {
     console.error("[/api/chat]", err)
-    return NextResponse.json({ error: "Failed to get answer" }, { status: 500 })
+    return NextResponse.json({ error: "Failed to process chat query" }, { status: 500 })
   }
 }
