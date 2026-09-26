@@ -2,122 +2,138 @@
 
 import { useState, useRef, useCallback } from "react"
 import { AudioLines, Pause, Play } from "lucide-react"
+import {
+  TranscriptSegment,
+  SpeakerProfile,
+  formatSegmentsToNoteText,
+  normalizeSpeakerId,
+} from "@/lib/speakers"
+import { extractFeaturesFromFloat32, identifySpeakerFromFeatures } from "@/lib/voice-matcher"
 
 const SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket"
 const SAMPLE_RATE = 16000
 const BUFFER_SIZE = 4096
 const SILENCE_THRESHOLD = 0.005
 
+export interface AudioRecordingData {
+  dataUrl: string
+  duration: number
+  mimeType: string
+}
+
 interface VoiceRecorderProps {
   lang?: string
   silenceTimeoutSec?: number
-  onTranscriptUpdate: (fullTranscript: string) => void
+  speakerProfiles?: SpeakerProfile[]
+  onTranscriptUpdate: (
+    plainText: string,
+    segments: TranscriptSegment[],
+    recording?: AudioRecordingData
+  ) => void
   onRecordingStart: () => void
   onRecordingStop: () => void
 }
 
-interface Line {
+interface RawSegment {
+  id: string
+  speaker_id: string
+  start: number
+  end: number
   text: string
-  ts: number // Date.now() when line started — used only for ordering
+  pcmSamples?: Float32Array
 }
-
-
-
-// Sentence-boundary characters that justify splitting a line
-const SENTENCE_END_RE = /[.!?。！？]+\s*/g
-const MAX_SEGMENT_CHARS = 180 // flush early if a segment grows beyond this
 
 interface Pipeline {
   stream: MediaStream
   ctx: AudioContext
   processor: ScriptProcessorNode
   ws: WebSocket
-  finalLines: Line[]
+  segments: RawSegment[]
   currentText: string
   unfinalizedText: string
-  currentTs: number // when current segment started
+  currentSpeakerId: string
+  currentStartSec: number
+  pipelineSpeakerDefault: string
 }
 
-
-export function VoiceRecorder({ lang = "en", silenceTimeoutSec = 30, onTranscriptUpdate, onRecordingStart, onRecordingStop }: VoiceRecorderProps) {
+export function VoiceRecorder({
+  lang = "en",
+  silenceTimeoutSec = 30,
+  speakerProfiles = [],
+  onTranscriptUpdate,
+  onRecordingStart,
+  onRecordingStop,
+}: VoiceRecorderProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
-  const [hasSystemAudio, setHasSystemAudio] = useState(false)
+  const [, setHasSystemAudio] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
 
   const micPipelineRef = useRef<Pipeline | null>(null)
   const sysPipelineRef = useRef<Pipeline | null>(null)
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const stopRecordingRef = useRef<() => void>(() => {})
 
-  const buildTranscript = () => {
+  const recordingStartTimeRef = useRef<number>(0)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const recordedAudioDataRef = useRef<AudioRecordingData | undefined>(undefined)
+
+  // Mapping from raw detected speaker_id -> resolved speaker_id (if matched with voice profile)
+  const speakerRemapRef = useRef<Map<string, string>>(new Map())
+
+  const getElapsedSeconds = useCallback(() => {
+    if (!recordingStartTimeRef.current) return 0
+    return Math.max(0, (Date.now() - recordingStartTimeRef.current) / 1000)
+  }, [])
+
+  // Build combined transcript text and structured segments
+  const buildTranscriptAndSegments = useCallback(() => {
     const mic = micPipelineRef.current
     const sys = sysPipelineRef.current
 
-    const taggedMic = (mic?.finalLines ?? []).map(l => ({ ...l, text: `You: ${l.text}` }))
-    const taggedSys = (sys?.finalLines ?? []).map(l => ({ ...l, text: `Other: ${l.text}` }))
+    const allRaw: RawSegment[] = [
+      ...(mic?.segments ?? []),
+      ...(sys?.segments ?? []),
+    ]
 
-    // Collect all finalized lines from both pipelines, sorted by time
-    const allFinal: Line[] = [
-      ...taggedMic,
-      ...taggedSys,
-    ].sort((a, b) => a.ts - b.ts)
-
-    // Plain text — just the spoken words, one sentence per line
-    let transcript = allFinal.map((l) => l.text).join("\n")
-
-    const appendCurrent = (p: Pipeline | null, tag: string) => {
+    // Append currently pending text
+    const appendPending = (p: Pipeline | null) => {
       if (!p) return
-      const current = (p.currentText + p.unfinalizedText).trim()
-      if (current) {
-        if (transcript) transcript += "\n"
-        transcript += `${tag}: ${current}`
+      const text = (p.currentText + p.unfinalizedText).trim()
+      if (text) {
+        const endSec = getElapsedSeconds()
+        allRaw.push({
+          id: `pending_${p.currentStartSec}_${Math.random().toString(36).slice(2, 6)}`,
+          speaker_id: p.currentSpeakerId || p.pipelineSpeakerDefault,
+          start: p.currentStartSec,
+          end: Math.max(endSec, p.currentStartSec + 0.5),
+          text,
+        })
       }
     }
 
-    appendCurrent(mic, "You")
-    appendCurrent(sys, "Other")
+    appendPending(mic)
+    appendPending(sys)
 
-    return transcript
-  }
+    // Sort by start timestamp
+    allRaw.sort((a, b) => a.start - b.start)
 
-  // Flush `currentText` in a pipeline whenever a sentence ends or the segment is too long.
-  // Returns the number of new lines flushed (0 if nothing happened).
-  const maybeFlushSegment = (pipeline: Pipeline): number => {
-    const text = pipeline.currentText
-    if (!text.trim()) return 0
-
-    const splitPoints: number[] = []
-    let match: RegExpExecArray | null
-    SENTENCE_END_RE.lastIndex = 0
-    while ((match = SENTENCE_END_RE.exec(text)) !== null) {
-      splitPoints.push(match.index + match[0].length)
-    }
-
-    let flushed = 0
-
-    if (splitPoints.length > 0) {
-      let prev = 0
-      for (const sp of splitPoints) {
-        const chunk = text.slice(prev, sp).trim()
-        if (chunk) {
-          pipeline.finalLines.push({ text: chunk, ts: pipeline.currentTs })
-          flushed++
-        }
-        prev = sp
-        pipeline.currentTs = Date.now()
+    // Map through speaker recognition remappings
+    const segments: TranscriptSegment[] = allRaw.map((s) => {
+      const remapped = speakerRemapRef.current.get(s.speaker_id) || s.speaker_id
+      return {
+        id: s.id,
+        speaker_id: remapped,
+        start: s.start,
+        end: s.end,
+        text: s.text,
       }
-      pipeline.currentText = text.slice(splitPoints[splitPoints.length - 1])
-    } else if (text.length > MAX_SEGMENT_CHARS) {
-      pipeline.finalLines.push({ text: text.trim(), ts: pipeline.currentTs })
-      pipeline.currentText = ""
-      pipeline.currentTs = Date.now()
-      flushed++
-    }
+    })
 
-    return flushed
-  }
+    const plainText = formatSegmentsToNoteText(segments, speakerProfiles)
+    return { plainText, segments }
+  }, [getElapsedSeconds, speakerProfiles])
 
   const destroyPipeline = (p: Pipeline | null) => {
     if (!p) return
@@ -128,11 +144,21 @@ export function VoiceRecorder({ lang = "en", silenceTimeoutSec = 30, onTranscrip
   }
 
   const cleanup = useCallback(() => {
-    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current)
+      silenceTimerRef.current = null
+    }
     destroyPipeline(micPipelineRef.current)
     destroyPipeline(sysPipelineRef.current)
     micPipelineRef.current = null
     sysPipelineRef.current = null
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      try {
+        mediaRecorderRef.current.stop()
+      } catch {}
+    }
+
     setIsRecording(false)
     setIsPaused(false)
     setHasSystemAudio(false)
@@ -144,125 +170,260 @@ export function VoiceRecorder({ lang = "en", silenceTimeoutSec = 30, onTranscrip
     const sys = sysPipelineRef.current
     if (mic?.ws.readyState === WebSocket.OPEN) mic.ws.send("")
     if (sys?.ws.readyState === WebSocket.OPEN) sys.ws.send("")
-    
-    if (mic) {
-      const remaining = (mic.currentText + mic.unfinalizedText).trim()
-      if (remaining) { mic.finalLines.push({ text: remaining, ts: mic.currentTs }); mic.currentText = ""; mic.unfinalizedText = "" }
-    }
-    if (sys) {
-      const remaining = (sys.currentText + sys.unfinalizedText).trim()
-      if (remaining) { sys.finalLines.push({ text: remaining, ts: sys.currentTs }); sys.currentText = ""; sys.unfinalizedText = "" }
+
+    const finalize = (p: Pipeline | null) => {
+      if (!p) return
+      const remaining = (p.currentText + p.unfinalizedText).trim()
+      if (remaining) {
+        const endSec = getElapsedSeconds()
+        p.segments.push({
+          id: `seg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          speaker_id: p.currentSpeakerId || p.pipelineSpeakerDefault,
+          start: p.currentStartSec,
+          end: Math.max(endSec, p.currentStartSec + 0.5),
+          text: remaining,
+        })
+        p.currentText = ""
+        p.unfinalizedText = ""
+      }
     }
 
-    onTranscriptUpdate(buildTranscript())
-    setTimeout(cleanup, 600)
-  }, [cleanup, onTranscriptUpdate])
+    finalize(mic)
+    finalize(sys)
+
+    const { plainText, segments } = buildTranscriptAndSegments()
+    onTranscriptUpdate(plainText, segments, recordedAudioDataRef.current)
+
+    setTimeout(cleanup, 500)
+  }, [buildTranscriptAndSegments, cleanup, getElapsedSeconds, onTranscriptUpdate])
 
   stopRecordingRef.current = stopRecording
 
   const pauseRecording = useCallback(() => {
-    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current)
+      silenceTimerRef.current = null
+    }
     micPipelineRef.current?.ctx.suspend()
     sysPipelineRef.current?.ctx.suspend()
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.pause()
+    }
     setIsPaused(true)
   }, [])
 
   const resumeRecording = useCallback(() => {
     micPipelineRef.current?.ctx.resume()
     sysPipelineRef.current?.ctx.resume()
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "paused") {
+      mediaRecorderRef.current.resume()
+    }
     setIsPaused(false)
   }, [])
 
-  const makePipeline = useCallback((stream: MediaStream, temporaryApiKey: string): Pipeline => {
-    const ctx = new AudioContext({ sampleRate: SAMPLE_RATE })
-    const processor = ctx.createScriptProcessor(BUFFER_SIZE, 1, 1)
-    ctx.createMediaStreamSource(stream).connect(processor)
+  const makePipeline = useCallback(
+    (
+      stream: MediaStream,
+      temporaryApiKey: string,
+      defaultSpeakerId: string
+    ): Pipeline => {
+      const ctx = new AudioContext({ sampleRate: SAMPLE_RATE })
+      const processor = ctx.createScriptProcessor(BUFFER_SIZE, 1, 1)
+      ctx.createMediaStreamSource(stream).connect(processor)
 
-    // Keep ScriptProcessorNode connected so browsers continue firing audio events,
-    // but mute its output to prevent captured system audio from looping back through
-    // the microphone and speakers.
-    const monitor = ctx.createGain()
-    monitor.gain.value = 0
-    processor.connect(monitor)
-    monitor.connect(ctx.destination)
+      const monitor = ctx.createGain()
+      monitor.gain.value = 0
+      processor.connect(monitor)
+      monitor.connect(ctx.destination)
 
-    const ws = new WebSocket(SONIOX_WS_URL)
-    const pipeline: Pipeline = { stream, ctx, processor, ws, finalLines: [], currentText: "", unfinalizedText: "", currentTs: Date.now() }
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({
-        api_key: temporaryApiKey,
-        model: "stt-rt-v4",
-        audio_format: "pcm_s16le",
-        sample_rate: SAMPLE_RATE,
-        num_channels: 1,
-        language: lang,
-        enable_endpoint_detection: true,
-        enable_speaker_diarization: false,
-      }))
-    }
-
-    ws.onmessage = (event) => {
-      let data: any
-      try { data = JSON.parse(event.data as string) } catch { return }
-      if (data.error_message) {
-        const msg: string = data.error_message
-        if (/timeout/i.test(msg)) { cleanup(); return }
-        setError(msg); cleanup(); return
+      const ws = new WebSocket(SONIOX_WS_URL)
+      const pipeline: Pipeline = {
+        stream,
+        ctx,
+        processor,
+        ws,
+        segments: [],
+        currentText: "",
+        unfinalizedText: "",
+        currentSpeakerId: defaultSpeakerId,
+        currentStartSec: 0,
+        pipelineSpeakerDefault: defaultSpeakerId,
       }
 
-      const tokens: Array<{ text: string; is_final: boolean }> = data.tokens || []
-      if (tokens.length > 0) {
-        pipeline.unfinalizedText = ""
+      ws.onopen = () => {
+        ws.send(
+          JSON.stringify({
+            api_key: temporaryApiKey,
+            model: "stt-rt-v4",
+            audio_format: "pcm_s16le",
+            sample_rate: SAMPLE_RATE,
+            num_channels: 1,
+            language: lang,
+            enable_endpoint_detection: true,
+            enable_speaker_diarization: true, // Speaker diarization enabled
+          })
+        )
       }
-      for (const token of tokens) {
-        const text = token.text.replace(/<[^>]+>/g, "")
-        if (token.is_final) {
-          if (!pipeline.currentText) pipeline.currentTs = Date.now()
-          pipeline.currentText += text
-        } else {
-          pipeline.unfinalizedText += text
+
+      const audioBufferQueue: Float32Array[] = []
+
+      ws.onmessage = (event) => {
+        let data: any
+        try {
+          data = JSON.parse(event.data as string)
+        } catch {
+          return
         }
+        if (data.error_message) {
+          const msg: string = data.error_message
+          if (/timeout/i.test(msg)) {
+            cleanup()
+            return
+          }
+          setError(msg)
+          cleanup()
+          return
+        }
+
+        const tokens: Array<{ text: string; is_final: boolean; speaker?: string | number }> =
+          data.tokens || []
+
+        if (tokens.length > 0) {
+          pipeline.unfinalizedText = ""
+        }
+
+        for (const token of tokens) {
+          const text = token.text.replace(/<[^>]+>/g, "")
+          const rawSpeaker = token.speaker !== undefined ? token.speaker : defaultSpeakerId
+          const speakerId = normalizeSpeakerId(rawSpeaker)
+
+          // If speaker changed while we have accumulated text, flush previous segment
+          if (pipeline.currentText.trim() && speakerId !== pipeline.currentSpeakerId) {
+            const endSec = getElapsedSeconds()
+            pipeline.segments.push({
+              id: `seg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              speaker_id: pipeline.currentSpeakerId,
+              start: pipeline.currentStartSec,
+              end: Math.max(endSec, pipeline.currentStartSec + 0.5),
+              text: pipeline.currentText.trim(),
+            })
+            pipeline.currentText = ""
+            pipeline.unfinalizedText = ""
+            pipeline.currentSpeakerId = speakerId
+            pipeline.currentStartSec = endSec
+          }
+
+          if (token.is_final) {
+            if (!pipeline.currentText) {
+              pipeline.currentStartSec = getElapsedSeconds()
+              pipeline.currentSpeakerId = speakerId
+            }
+            pipeline.currentText += text
+          } else {
+            pipeline.unfinalizedText += text
+          }
+        }
+
+        // Flush on Soniox endpoint
+        if (data.endpoint && pipeline.currentText.trim()) {
+          const endSec = getElapsedSeconds()
+          const segSpeaker = pipeline.currentSpeakerId || defaultSpeakerId
+
+          // Check voice recognition if speaker not yet mapped
+          if (!speakerRemapRef.current.has(segSpeaker) && audioBufferQueue.length > 0) {
+            // Concatenate recent PCM frames to extract acoustic features
+            const totalSamples = audioBufferQueue.reduce((acc, b) => acc + b.length, 0)
+            const combined = new Float32Array(totalSamples)
+            let offset = 0
+            for (const b of audioBufferQueue) {
+              combined.set(b, offset)
+              offset += b.length
+            }
+            audioBufferQueue.length = 0 // clear
+            const features = extractFeaturesFromFloat32(combined, SAMPLE_RATE)
+            const match = identifySpeakerFromFeatures(features, speakerProfiles)
+            if (match) {
+              speakerRemapRef.current.set(segSpeaker, match.profile.id)
+            }
+          }
+
+          pipeline.segments.push({
+            id: `seg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            speaker_id: segSpeaker,
+            start: pipeline.currentStartSec,
+            end: Math.max(endSec, pipeline.currentStartSec + 0.5),
+            text: pipeline.currentText.trim(),
+          })
+          pipeline.currentText = ""
+          pipeline.unfinalizedText = ""
+          pipeline.currentStartSec = endSec
+        }
+
+        const { plainText, segments } = buildTranscriptAndSegments()
+        onTranscriptUpdate(plainText, segments, recordedAudioDataRef.current)
+
+        if (data.finished) cleanup()
       }
 
-      // Flush on explicit endpoint (Soniox speech boundary)
-      if (data.endpoint && pipeline.currentText.trim()) {
-        pipeline.finalLines.push({ text: pipeline.currentText.trim(), ts: pipeline.currentTs })
-        pipeline.currentText = ""
-        pipeline.unfinalizedText = ""
-        pipeline.currentTs = Date.now()
-      } else {
-        // Also auto-flush on sentence boundaries / long segments
-        maybeFlushSegment(pipeline)
+      ws.onerror = () => {
+        setError("WebSocket error — check API key")
+        cleanup()
+      }
+      ws.onclose = (e) => {
+        if (e.code !== 1000 && e.code !== 1001) cleanup()
       }
 
-      onTranscriptUpdate(buildTranscript())
-      if (data.finished) cleanup()
-    }
+      processor.onaudioprocess = (e) => {
+        if (ws.readyState !== WebSocket.OPEN) return
+        const f32 = e.inputBuffer.getChannelData(0)
+        let maxAmp = 0
+        for (let i = 0; i < f32.length; i++) {
+          const a = Math.abs(f32[i])
+          if (a > maxAmp) maxAmp = a
+        }
 
-    ws.onerror = () => { setError("WebSocket error — check API key"); cleanup() }
-    ws.onclose = (e) => { if (e.code !== 1000 && e.code !== 1001) cleanup() }
+        if (maxAmp > SILENCE_THRESHOLD) {
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current)
+            silenceTimerRef.current = null
+          }
+        } else if (!silenceTimerRef.current) {
+          silenceTimerRef.current = setTimeout(() => {
+            silenceTimerRef.current = null
+            stopRecordingRef.current()
+          }, silenceTimeoutSec * 1000)
+        }
 
-    processor.onaudioprocess = (e) => {
-      if (ws.readyState !== WebSocket.OPEN) return
-      const f32 = e.inputBuffer.getChannelData(0)
-      let maxAmp = 0
-      for (let i = 0; i < f32.length; i++) { const a = Math.abs(f32[i]); if (a > maxAmp) maxAmp = a }
-      if (maxAmp > SILENCE_THRESHOLD) {
-        if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null }
-      } else if (!silenceTimerRef.current) {
-        silenceTimerRef.current = setTimeout(() => { silenceTimerRef.current = null; stopRecordingRef.current() }, silenceTimeoutSec * 1000)
+        // Keep last 15 buffers (~3.8 seconds) for voice feature comparison
+        audioBufferQueue.push(new Float32Array(f32))
+        if (audioBufferQueue.length > 20) audioBufferQueue.shift()
+
+        const i16 = new Int16Array(f32.length)
+        for (let i = 0; i < f32.length; i++) {
+          i16[i] = Math.max(-32768, Math.min(32767, Math.round(f32[i] * 32767)))
+        }
+        ws.send(i16.buffer)
       }
-      const i16 = new Int16Array(f32.length)
-      for (let i = 0; i < f32.length; i++) i16[i] = Math.max(-32768, Math.min(32767, Math.round(f32[i] * 32767)))
-      ws.send(i16.buffer)
-    }
 
-    return pipeline
-  }, [lang, silenceTimeoutSec, cleanup])
+      return pipeline
+    },
+    [
+      lang,
+      silenceTimeoutSec,
+      cleanup,
+      getElapsedSeconds,
+      speakerProfiles,
+      buildTranscriptAndSegments,
+      onTranscriptUpdate,
+    ]
+  )
 
   const startRecording = useCallback(async () => {
     setError(null)
+    speakerRemapRef.current.clear()
+    recordingStartTimeRef.current = Date.now()
+    audioChunksRef.current = []
+    recordedAudioDataRef.current = undefined
 
     try {
       const tokenResponse = await fetch("/api/soniox/token", { method: "POST" })
@@ -274,12 +435,15 @@ export function VoiceRecorder({ lang = "en", silenceTimeoutSec = 30, onTranscrip
       let micStarted = false
       let sysStarted = false
 
+      let combinedStream: MediaStream | null = null
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-        micPipelineRef.current = makePipeline(stream, temporaryApiKey)
+        micPipelineRef.current = makePipeline(stream, temporaryApiKey, "speaker_1")
         micStarted = true
+        combinedStream = stream
       } catch {
-        // Continue with system audio when microphone permission is unavailable.
+        // Continue with system audio if mic unavailable
       }
 
       try {
@@ -288,37 +452,92 @@ export function VoiceRecorder({ lang = "en", silenceTimeoutSec = 30, onTranscrip
           video: true,
         })
         displayStream.getVideoTracks().forEach((t: MediaStreamTrack) => t.stop())
-        const audioTracks = displayStream.getAudioTracks().filter((t: MediaStreamTrack) => t.readyState === "live")
+        const audioTracks = displayStream
+          .getAudioTracks()
+          .filter((t: MediaStreamTrack) => t.readyState === "live")
         if (audioTracks.length > 0) {
-          sysPipelineRef.current = makePipeline(new MediaStream(audioTracks), temporaryApiKey)
+          const sysStream = new MediaStream(audioTracks)
+          sysPipelineRef.current = makePipeline(sysStream, temporaryApiKey, "speaker_2")
           setHasSystemAudio(true)
           sysStarted = true
+          if (!combinedStream) combinedStream = sysStream
         }
       } catch {
-        // Continue with microphone when system audio is unavailable.
+        // Continue with mic if system audio unavailable
       }
 
       if (!micStarted && !sysStarted) throw new Error("No audio source available")
+
+      // Setup MediaRecorder for audio playback in transcription sidebar
+      if (combinedStream && typeof MediaRecorder !== "undefined") {
+        try {
+          const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+            ? "audio/webm;codecs=opus"
+            : MediaRecorder.isTypeSupported("audio/mp4")
+            ? "audio/mp4"
+            : "audio/webm"
+          const mediaRecorder = new MediaRecorder(combinedStream, { mimeType })
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              audioChunksRef.current.push(event.data)
+            }
+          }
+          mediaRecorder.onstop = () => {
+            if (audioChunksRef.current.length > 0) {
+              const fullBlob = new Blob(audioChunksRef.current, { type: mimeType })
+              const reader = new FileReader()
+              reader.onloadend = () => {
+                const base64 = reader.result as string
+                const duration = getElapsedSeconds()
+                recordedAudioDataRef.current = {
+                  dataUrl: base64,
+                  duration,
+                  mimeType,
+                }
+                const { plainText, segments } = buildTranscriptAndSegments()
+                onTranscriptUpdate(plainText, segments, recordedAudioDataRef.current)
+              }
+              reader.readAsDataURL(fullBlob)
+            }
+          }
+          mediaRecorder.start(1000)
+          mediaRecorderRef.current = mediaRecorder
+        } catch (e) {
+          console.warn("Could not start MediaRecorder for playback:", e)
+        }
+      }
+
       setIsRecording(true)
       onRecordingStart()
     } catch (err: any) {
       setError(err?.message || "Failed to access audio")
       cleanup()
     }
-  }, [onRecordingStart, cleanup, makePipeline])
+  }, [
+    makePipeline,
+    onRecordingStart,
+    cleanup,
+    getElapsedSeconds,
+    buildTranscriptAndSegments,
+    onTranscriptUpdate,
+  ])
 
   return (
     <div className="flex items-center gap-1">
       {error && (
-        <span className="text-xs text-red-400 max-w-[140px] truncate" title={error}>{error}</span>
+        <span className="text-xs text-red-400 max-w-[140px] truncate" title={error}>
+          {error}
+        </span>
       )}
 
-      {/* Pause / Resume button — only during recording */}
+      {/* Pause / Resume button */}
       {isRecording && (
         <button
-          onClick={() => isPaused ? resumeRecording() : pauseRecording()}
+          onClick={() => (isPaused ? resumeRecording() : pauseRecording())}
           className={`p-2 rounded-lg transition-colors ${
-            isPaused ? "text-blue-400 bg-zinc-800 hover:bg-zinc-700" : "text-orange-400 hover:bg-zinc-800"
+            isPaused
+              ? "text-blue-600 bg-zinc-100 hover:bg-zinc-200 dark:text-blue-400 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+              : "text-amber-600 hover:bg-zinc-100 dark:text-yellow-500 dark:hover:bg-zinc-800"
           }`}
           title={isPaused ? "Resume recording" : "Pause recording"}
         >
@@ -326,13 +545,13 @@ export function VoiceRecorder({ lang = "en", silenceTimeoutSec = 30, onTranscrip
         </button>
       )}
 
-      {/* One-button recording flow: start captures microphone and system audio automatically. */}
+      {/* Record button */}
       <button
-        onClick={() => isRecording ? stopRecording() : startRecording()}
+        onClick={() => (isRecording ? stopRecording() : startRecording())}
         className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
           isRecording
-            ? "bg-red-500/10 text-red-400 hover:bg-red-500/20"
-            : "text-gray-300 hover:bg-zinc-800 hover:text-blue-400"
+            ? "bg-red-500/10 text-red-500 hover:bg-red-500/20 dark:text-red-400"
+            : "text-zinc-600 hover:bg-zinc-100 hover:text-amber-600 dark:text-gray-300 dark:hover:bg-zinc-800 dark:hover:text-yellow-400"
         }`}
         title={isRecording ? "Stop recording" : "Start recording"}
         aria-label={isRecording ? "Stop recording" : "Start recording"}

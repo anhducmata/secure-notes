@@ -110,31 +110,19 @@ export function PinLoginModal({ isOpen, onClose, onSuccess, onSwitchToPassword, 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{
-        backdropFilter: "blur(20px)",
-        WebkitBackdropFilter: "blur(20px)",
-        backgroundColor: "rgba(0,0,0,0.55)",
-      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-md"
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"
       aria-label="Quick PIN Login"
     >
       <div
-        className="relative w-full max-w-sm rounded-2xl overflow-hidden"
-        style={{
-          background: "rgba(28,28,30,0.82)",
-          backdropFilter: "blur(40px)",
-          WebkitBackdropFilter: "blur(40px)",
-          border: "1px solid rgba(255,255,255,0.10)",
-          boxShadow: "0 32px 64px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(255,255,255,0.06) inset",
-        }}
+        data-popover-container
+        className="relative w-full max-w-sm rounded-2xl overflow-hidden bg-white/95 text-zinc-900 border border-zinc-200 shadow-2xl backdrop-blur-3xl dark:bg-zinc-900 dark:text-white dark:border-zinc-800 dark:shadow-[0_32px_64px_rgba(0,0,0,0.7)]"
       >
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-full transition-colors"
-          style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)" }}
+          className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-full transition-colors bg-zinc-100 hover:bg-zinc-200 text-zinc-500 hover:text-zinc-800 dark:bg-white/10 dark:hover:bg-white/15 dark:text-white/60 dark:hover:text-white"
           aria-label="Close"
         >
           <X className="h-3.5 w-3.5" />
@@ -142,13 +130,12 @@ export function PinLoginModal({ isOpen, onClose, onSuccess, onSwitchToPassword, 
 
         <div className="px-6 pt-7 pb-5 text-center">
           <div
-            className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl"
-            style={{ background: "rgba(234,179,8,0.15)", border: "1px solid rgba(234,179,8,0.25)" }}
+            className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-yellow-500"
           >
-            <Key className="h-6 w-6 text-yellow-500" />
+            <Key className="h-6 w-6" />
           </div>
-          <h2 className="text-lg font-semibold text-white tracking-tight">Welcome back</h2>
-          <p className="mt-1 text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
+          <h2 className="text-lg font-bold text-zinc-900 dark:text-white tracking-tight">Welcome back</h2>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-white/40">
             {userName}
           </p>
         </div>
@@ -156,19 +143,14 @@ export function PinLoginModal({ isOpen, onClose, onSuccess, onSwitchToPassword, 
         <div className="px-6 pb-7">
           {error && (
             <div
-              className="mb-4 flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs"
-              style={{
-                background: "rgba(239,68,68,0.15)",
-                border: "1px solid rgba(239,68,68,0.25)",
-                color: "rgb(252,165,165)",
-              }}
+              className="mb-4 flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-300"
             >
               <AlertCircle className="h-4 w-4 shrink-0" />
               <span>{error}</span>
             </div>
           )}
 
-          <p className="text-center text-sm text-white mb-4">Enter your PIN</p>
+          <p className="text-center text-sm font-medium text-zinc-800 dark:text-white mb-4">Enter your PIN</p>
 
           <div className="flex justify-center gap-2">
             {pin.map((digit, i) => (
@@ -181,11 +163,7 @@ export function PinLoginModal({ isOpen, onClose, onSuccess, onSwitchToPassword, 
                 value={digit}
                 onChange={(e) => handlePinInput(i, e.target.value)}
                 onKeyDown={(e) => handleKeyDown(e, i)}
-                className="h-12 w-10 rounded-xl text-center text-xl font-semibold text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
-                style={{
-                  background: "rgba(255,255,255,0.08)",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                }}
+                className="h-12 w-10 rounded-xl text-center text-xl font-semibold bg-zinc-50 border border-zinc-200 text-zinc-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 dark:bg-white/10 dark:border-white/10 dark:text-white dark:focus:ring-yellow-500"
                 autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="off"
@@ -199,8 +177,7 @@ export function PinLoginModal({ isOpen, onClose, onSuccess, onSwitchToPassword, 
 
           <button
             onClick={onSwitchToPassword}
-            className="mt-6 w-full text-center text-xs"
-            style={{ color: "rgba(234,179,8,0.8)" }}
+            className="mt-6 w-full text-center text-xs text-amber-600 hover:text-amber-700 dark:text-yellow-400/80 dark:hover:text-yellow-300"
           >
             Use password instead
           </button>

@@ -172,28 +172,20 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", backgroundColor: "rgba(0,0,0,0.55)" }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-md"
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"
       aria-label="Authentication"
     >
       <div
-        className="relative w-full max-w-sm rounded-2xl overflow-hidden"
-        style={{
-          background: "rgba(28,28,30,0.82)",
-          backdropFilter: "blur(40px)",
-          WebkitBackdropFilter: "blur(40px)",
-          border: "1px solid rgba(255,255,255,0.10)",
-          boxShadow: "0 32px 64px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(255,255,255,0.06) inset",
-        }}
+        data-popover-container
+        className="relative w-full max-w-sm rounded-2xl overflow-hidden bg-white/95 text-zinc-900 border border-zinc-200 shadow-2xl backdrop-blur-3xl dark:bg-zinc-900 dark:text-white dark:border-zinc-800 dark:shadow-[0_32px_64px_rgba(0,0,0,0.7)]"
       >
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-full transition-colors"
-          style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)" }}
+          className="absolute right-4 top-4 z-10 flex h-7 w-7 items-center justify-center rounded-full transition-colors bg-zinc-100 hover:bg-zinc-200 text-zinc-500 hover:text-zinc-800 dark:bg-white/10 dark:hover:bg-white/15 dark:text-white/60 dark:hover:text-white"
           aria-label="Close modal"
         >
           <X className="h-3.5 w-3.5" />
@@ -202,16 +194,15 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
         {/* Header */}
         <div className="px-6 pt-7 pb-5 text-center">
           <div
-            className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl"
-            style={{ background: "rgba(234,179,8,0.15)", border: "1px solid rgba(234,179,8,0.25)" }}
+            className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-yellow-500"
           >
             {tab === "forgot" ? (
-              <Mail className="h-5 w-5" style={{ color: "rgb(234,179,8)" }} />
+              <Mail className="h-5 w-5" />
             ) : (
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path
                   d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
-                  stroke="rgb(234,179,8)"
+                  stroke="currentColor"
                   strokeWidth="1.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -219,10 +210,10 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
               </svg>
             )}
           </div>
-          <h2 className="text-lg font-semibold text-white tracking-tight">
+          <h2 className="text-lg font-bold text-zinc-900 dark:text-white tracking-tight">
             {tab === "forgot" ? "Reset Password" : "Notes"}
           </h2>
-          <p className="mt-1 text-xs" style={{ color: "rgba(255,255,255,0.4)" }}>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-white/50">
             {tab === "forgot" 
               ? "Enter your email to receive a reset link" 
               : "Sign in to sync your notes across devices"}
@@ -231,17 +222,16 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
 
         {/* Tab switcher - hide when in forgot password mode */}
         {tab !== "forgot" && (
-          <div className="mx-6 mb-5 flex rounded-xl p-1" style={{ background: "rgba(255,255,255,0.06)" }}>
+          <div className="mx-6 mb-5 flex rounded-xl p-1 bg-zinc-100 border border-zinc-200/60 dark:bg-white/10 dark:border-transparent">
             {(["signin", "signup"] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => switchTab(t)}
-                className="flex-1 rounded-lg py-2 text-sm font-medium transition-all"
-                style={{
-                  background: tab === t ? "rgba(255,255,255,0.12)" : "transparent",
-                  color: tab === t ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.4)",
-                  boxShadow: tab === t ? "0 1px 4px rgba(0,0,0,0.3)" : "none",
-                }}
+                className={`flex-1 rounded-lg py-2 text-sm font-semibold transition-all ${
+                  tab === t
+                    ? "bg-white text-zinc-950 shadow-sm border border-zinc-200/80 dark:bg-white/20 dark:text-white dark:border-transparent"
+                    : "text-zinc-600 hover:text-zinc-950 dark:text-white/50 dark:hover:text-white"
+                }`}
               >
                 {t === "signin" ? "Sign In" : "Sign Up"}
               </button>
@@ -252,8 +242,7 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
         {/* Error message */}
         {error && (
           <div
-            className="mx-6 mb-4 flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs"
-            style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.25)", color: "rgb(252,165,165)" }}
+            className="mx-6 mb-4 flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-300"
           >
             <AlertCircle className="h-4 w-4 shrink-0" />
             <span>{error}</span>
@@ -282,8 +271,7 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
                 <button
                   type="button"
                   onClick={() => switchTab("signin")}
-                  className="text-xs mt-1"
-                  style={{ color: "rgba(255,255,255,0.4)" }}
+                  className="text-xs mt-1 text-zinc-500 hover:text-zinc-800 dark:text-white/50 dark:hover:text-white"
                 >
                   Back to Sign In
                 </button>
@@ -310,7 +298,7 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    style={{ color: "rgba(255,255,255,0.35)" }}
+                    className="text-zinc-400 hover:text-zinc-700 dark:text-white/35 dark:hover:text-white"
                     aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -320,8 +308,7 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
               <button
                 type="button"
                 onClick={() => switchTab("forgot")}
-                className="text-right text-xs"
-                style={{ color: "rgba(234,179,8,0.8)" }}
+                className="text-right text-xs text-amber-700 hover:text-amber-800 dark:text-yellow-400 dark:hover:text-yellow-300 font-medium"
               >
                 Forgot password?
               </button>
@@ -358,7 +345,7 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    style={{ color: "rgba(255,255,255,0.35)" }}
+                    className="text-zinc-400 hover:text-zinc-700 dark:text-white/35 dark:hover:text-white"
                     aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -366,10 +353,10 @@ export function AuthModal({ isOpen, onClose, onSignIn }: AuthModalProps) {
                 }
               />
               <SubmitButton label="Create Account" isLoading={isLoading} />
-              <p className="text-center text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.3)" }}>
+              <p className="text-center text-xs leading-relaxed text-zinc-500 dark:text-white/40">
                 By creating an account, you agree to our{" "}
-                <Link href="/terms" target="_blank" className="hover:underline" style={{ color: "rgba(234,179,8,0.7)" }}>Terms of Service</Link> and{" "}
-                <Link href="/privacy" target="_blank" className="hover:underline" style={{ color: "rgba(234,179,8,0.7)" }}>Privacy Policy</Link>.
+                <Link href="/terms" target="_blank" className="hover:underline text-amber-700 dark:text-yellow-400 font-medium">Terms of Service</Link> and{" "}
+                <Link href="/privacy" target="_blank" className="hover:underline text-amber-700 dark:text-yellow-400 font-medium">Privacy Policy</Link>.
               </p>
             </form>
           )}
@@ -400,21 +387,16 @@ function InputField({
 }) {
   return (
     <div
-      className="flex items-center gap-2.5 rounded-xl px-3.5 py-3 transition-all"
-      style={{
-        background: "rgba(255,255,255,0.07)",
-        border: "1px solid rgba(255,255,255,0.08)",
-      }}
+      className="flex items-center gap-2.5 rounded-xl px-3.5 py-3 transition-all bg-zinc-50 border border-zinc-200 focus-within:border-amber-500 focus-within:bg-white focus-within:ring-1 focus-within:ring-amber-500 dark:bg-white/5 dark:border-white/10 dark:focus-within:bg-white/10 dark:focus-within:border-yellow-500/50"
     >
-      <span style={{ color: "rgba(255,255,255,0.3)" }}>{icon}</span>
+      <span className="text-zinc-400 dark:text-white/30">{icon}</span>
       <input
         type={type}
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         required={required}
-        className="flex-1 bg-transparent text-sm text-white focus:outline-none"
-        style={{ color: "rgba(255,255,255,0.9)" }}
+        className="flex-1 bg-transparent text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none dark:text-white dark:placeholder-white/30"
       />
       {suffix}
     </div>
@@ -426,14 +408,7 @@ function SubmitButton({ label, isLoading }: { label: string; isLoading: boolean 
     <button
       type="submit"
       disabled={isLoading}
-      className="mt-1 w-full rounded-xl py-3 text-sm font-semibold tracking-wide transition-all active:scale-[0.98]"
-      style={{
-        background: isLoading
-          ? "rgba(234,179,8,0.5)"
-          : "linear-gradient(135deg, rgb(234,179,8) 0%, rgb(202,138,4) 100%)",
-        color: "rgb(0,0,0)",
-        boxShadow: isLoading ? "none" : "0 4px 16px rgba(234,179,8,0.3)",
-      }}
+      className="mt-1 w-full rounded-xl py-3 text-sm font-bold tracking-wide transition-all active:scale-[0.98] bg-amber-500 hover:bg-amber-400 text-black shadow-md hover:shadow-lg disabled:opacity-50 dark:bg-yellow-500 dark:hover:bg-yellow-400 dark:text-black dark:shadow-[0_4px_16px_rgba(234,179,8,0.3)] cursor-pointer"
     >
       {isLoading ? (
         <span className="flex items-center justify-center gap-2">
@@ -458,32 +433,30 @@ function EmailConfirmation({ email, onBack, onResend, isLoading }: { email: stri
   return (
     <div className="flex flex-col items-center gap-4 py-2 text-center">
       <div
-        className="flex h-14 w-14 items-center justify-center rounded-full"
-        style={{ background: "rgba(234,179,8,0.12)", border: "1px solid rgba(234,179,8,0.2)" }}
+        className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-yellow-500"
       >
-        <CheckCircle className="h-7 w-7" style={{ color: "rgb(234,179,8)" }} />
+        <CheckCircle className="h-7 w-7" />
       </div>
       <div>
-        <p className="text-sm font-semibold text-white">Check your email</p>
-        <p className="mt-1.5 text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.4)" }}>
+        <p className="text-sm font-semibold text-zinc-900 dark:text-white">Check your email</p>
+        <p className="mt-1.5 text-xs leading-relaxed text-zinc-500 dark:text-white/40">
           We sent a confirmation link to
           <br />
-          <span className="font-medium" style={{ color: "rgba(255,255,255,0.7)" }}>
+          <span className="font-medium text-zinc-800 dark:text-white/70">
             {email}
           </span>
         </p>
       </div>
-      <p className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
+      <p className="text-xs text-zinc-400 dark:text-white/30">
         Didn&apos;t receive it?{" "}
-        <button type="button" onClick={onResend} disabled={isLoading} style={{ color: "rgba(234,179,8,0.8)" }}>
+        <button type="button" onClick={onResend} disabled={isLoading} className="text-amber-600 hover:underline dark:text-yellow-400">
           {isLoading ? "Sending..." : "Resend email"}
         </button>
       </p>
       <button
         onClick={onBack}
         type="button"
-        className="text-xs"
-        style={{ color: "rgba(255,255,255,0.3)" }}
+        className="text-xs text-zinc-500 hover:text-zinc-800 dark:text-white/40 dark:hover:text-white"
       >
         Back to sign up
       </button>
@@ -495,31 +468,29 @@ function ResetEmailConfirmation({ email, onBack }: { email: string; onBack: () =
   return (
     <div className="flex flex-col items-center gap-4 py-2 text-center">
       <div
-        className="flex h-14 w-14 items-center justify-center rounded-full"
-        style={{ background: "rgba(234,179,8,0.12)", border: "1px solid rgba(234,179,8,0.2)" }}
+        className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-yellow-500"
       >
-        <CheckCircle className="h-7 w-7" style={{ color: "rgb(234,179,8)" }} />
+        <CheckCircle className="h-7 w-7" />
       </div>
       <div>
-        <p className="text-sm font-semibold text-white">Check your email</p>
-        <p className="mt-1.5 text-xs leading-relaxed" style={{ color: "rgba(255,255,255,0.4)" }}>
+        <p className="text-sm font-semibold text-zinc-900 dark:text-white">Check your email</p>
+        <p className="mt-1.5 text-xs leading-relaxed text-zinc-500 dark:text-white/40">
           If an account exists for
           <br />
-          <span className="font-medium" style={{ color: "rgba(255,255,255,0.7)" }}>
+          <span className="font-medium text-zinc-800 dark:text-white/70">
             {email}
           </span>
           <br />
           you will receive a password reset link.
         </p>
       </div>
-      <p className="text-xs" style={{ color: "rgba(255,255,255,0.3)" }}>
+      <p className="text-xs text-zinc-400 dark:text-white/30">
         Link expires in 1 hour
       </p>
       <button
         onClick={onBack}
         type="button"
-        className="text-xs"
-        style={{ color: "rgba(234,179,8,0.8)" }}
+        className="text-xs text-amber-600 hover:underline dark:text-yellow-400"
       >
         Back to Sign In
       </button>

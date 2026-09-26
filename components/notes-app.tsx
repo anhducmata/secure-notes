@@ -1,21 +1,101 @@
 "use client"
 
-import React, { useState, useEffect, useCallback, useRef } from "react"
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import useSWR from "swr"
-import { Plus, Search, ChevronLeft, Lock, Share2, Trash2, Brain, Send, Bot, User, Loader2, FileText, MessageSquare, Trash, Eye, EyeOff, Download, Play, Pause, X } from "lucide-react"
+import {
+  Plus,
+  Search,
+  ChevronLeft,
+  Lock,
+  Share2,
+  Trash2,
+  Brain,
+  Send,
+  Bot,
+  User,
+  Loader2,
+  FileText,
+  MessageSquare,
+  Trash,
+  Eye,
+  EyeOff,
+  Download,
+  Play,
+  Pause,
+  X,
+  AudioWaveform,
+  SlidersHorizontal,
+  Folder as FolderIcon,
+  FolderOpen,
+  Archive,
+  Settings as SettingsIcon,
+  Sparkles,
+  PanelLeft,
+  MoreHorizontal,
+  FolderInput,
+  Notebook,
+  AlertTriangle,
+  RotateCcw,
+  Edit3,
+  CornerDownRight,
+  Check,
+  Users,
+} from "lucide-react"
 import { AuthModal } from "@/components/auth-modal"
 import { AvatarButton } from "@/components/avatar-button"
-import { getSilenceTimeout, getTranscriptionLang, getOpenAiApiKey, getDeepseekApiKey } from "@/lib/user-settings"
+import { ThemeToggle } from "@/components/theme-toggle"
+import { getSilenceTimeout, getTranscriptionLang } from "@/lib/user-settings"
 import { PinLoginModal, storePinData, getPinData, removePinData } from "@/components/pin-login-modal"
 import {
   encryptNote,
   decryptNote,
+  getNoteDisplayTitle,
   type EncryptedPayload,
   type DecryptedNote,
   type NoteAttachment,
 } from "@/lib/crypto"
-import { ShareModal } from "@/components/share-modal"
-import { VoiceRecorder } from "@/components/voice-recorder"
+import { ShareModal, type ShareTarget } from "@/components/share-modal"
+import { SpotlightSearchModal } from "@/components/spotlight-search-modal"
+import { HighlightText } from "@/lib/highlight"
+import { VoiceRecorder, type AudioRecordingData } from "@/components/voice-recorder"
+import { TranscriptionSidebar } from "@/components/transcription-sidebar"
+import { SettingsModal } from "@/components/settings-modal"
+import {
+  NoteFilterModal,
+  type NoteFilterCriteria,
+  EMPTY_NOTE_FILTERS,
+  type SpeakerOption,
+} from "@/components/note-filter-modal"
+import { NoteTagsPopover } from "@/components/note-tags-popover"
+import {
+  type SpeakerProfile,
+  type TranscriptSegment,
+  getStoredSpeakers,
+  saveStoredSpeakers,
+  resolveSpeakerName,
+  updateNoteTextSpeakerName,
+} from "@/lib/speakers"
+import {
+  getStoredTags,
+  saveStoredTags,
+  addStoredTag,
+  APPLE_TAG_COLORS,
+  getStoredTagColors,
+  getTagColor,
+} from "@/lib/tags"
+import {
+  type FolderItem,
+  type SharedCollaborator,
+  getStoredFolders,
+  addStoredFolder,
+  renameStoredFolder,
+  deleteStoredFolder,
+  archiveStoredFolder,
+  moveFolderToParent,
+  getFlattenedFolderTree,
+  updateFolderCollaborators,
+  DEFAULT_FOLDERS,
+} from "@/lib/folders"
 import type { Citation, Message } from "@/components/ai-chat-modal"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -43,28 +123,24 @@ interface User {
 
 const fetcher = (url: string) => fetch(url, { credentials: "include" }).then((r) => r.json())
 
-// Limits (must match server-side)
+// Limits
 const MAX_NOTES_PER_USER = 100
 const MAX_CONTENT_LENGTH = 50000 // ~50,000 characters
 
 // Tab-visibility lock thresholds
-const PIN_TIMEOUT = 60 * 60 * 1000          // 1 hour  → show PIN login
-const LOGOUT_TIMEOUT = 12 * 60 * 60 * 1000  // 12 hours → full logout
+const PIN_TIMEOUT = 60 * 60 * 1000 // 1 hour
+const LOGOUT_TIMEOUT = 12 * 60 * 60 * 1000 // 12 hours
 
-// ─── Hooks ────────────────────────────────────────────────────────────────────
+// ─── Helper Functions ─────────────────────────────────────────────────────────
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value)
-
   useEffect(() => {
     const handler = setTimeout(() => setDebouncedValue(value), delay)
     return () => clearTimeout(handler)
   }, [value, delay])
-
   return debouncedValue
 }
-
-// ─── Chat helpers ─────────────────────────────────────────────────────────────
 
 const WELCOME_MSG: Message = {
   id: "welcome",
@@ -82,16 +158,34 @@ function formatRelativeTime(iso: string) {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
-function colorizeTranscriptLabels(children: React.ReactNode): React.ReactNode {
-  return React.Children.map(children, (child) => {
-    if (typeof child !== "string") return child
-    const parts = child.split(/(Other:)/g)
-    return parts.map((part, index) =>
-      part === "Other:"
-        ? <span key={`other-label-${index}`} className="text-yellow-400 font-medium">{part}</span>
-        : part,
-    )
-  })
+// Format: 15 July, 2026
+function formatDateStandard(date: Date | string): string {
+  const d = new Date(date)
+  if (isNaN(d.getTime())) return formatDateStandard(new Date())
+  const day = d.getDate()
+  const month = d.toLocaleString("en-US", { month: "long" })
+  const year = d.getFullYear()
+  return `${day} ${month}, ${year}`
+}
+
+function getTagPillClass(tag: string): string {
+  const lower = tag.toLowerCase()
+  if (lower === "work") {
+    return "bg-amber-100/80 text-amber-800 dark:bg-amber-950/60 dark:text-yellow-300"
+  }
+  if (lower === "meeting") {
+    return "bg-zinc-100 text-zinc-600 dark:bg-zinc-800/80 dark:text-zinc-300"
+  }
+  if (lower === "amili") {
+    return "bg-sky-100/80 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300"
+  }
+  if (lower === "product") {
+    return "bg-rose-100/80 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+  }
+  if (lower === "personal") {
+    return "bg-emerald-100/80 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+  }
+  return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
 }
 
 function MarkdownContent({ content }: { content: string }) {
@@ -99,25 +193,26 @@ function MarkdownContent({ content }: { content: string }) {
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{colorizeTranscriptLabels(children)}</p>,
-        h1: ({ children }) => <h1 className="text-lg font-bold mb-2 mt-3 first:mt-0">{children}</h1>,
-        h2: ({ children }) => <h2 className="text-base font-bold mb-2 mt-3 first:mt-0">{children}</h2>,
-        h3: ({ children }) => <h3 className="text-sm font-bold mb-1 mt-2 first:mt-0">{children}</h3>,
-        ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
-        ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
+        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed text-zinc-800 dark:text-zinc-200">{children}</p>,
+        h1: ({ children }) => <h1 className="text-xl font-bold mb-2 mt-4 first:mt-0 text-zinc-900 dark:text-white">{children}</h1>,
+        h2: ({ children }) => <h2 className="text-lg font-bold mb-2 mt-3 first:mt-0 text-zinc-900 dark:text-white">{children}</h2>,
+        h3: ({ children }) => <h3 className="text-sm font-bold mb-1 mt-2 first:mt-0 text-zinc-900 dark:text-white">{children}</h3>,
+        ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-0.5 text-zinc-800 dark:text-zinc-200">{children}</ul>,
+        ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-0.5 text-zinc-800 dark:text-zinc-200">{children}</ol>,
         li: ({ children }) => <li className="leading-relaxed">{children}</li>,
         code: ({ children, className }) => {
           const isBlock = className?.includes("language-")
-          return isBlock
-            ? <code className="block bg-zinc-800 rounded p-2 text-xs font-mono my-2 overflow-x-auto whitespace-pre">{children}</code>
-            : <code className="bg-zinc-800 rounded px-1 py-0.5 text-xs font-mono">{children}</code>
+          return isBlock ? (
+            <code className="block bg-zinc-100 border border-zinc-200 rounded p-2 text-xs font-mono my-2 overflow-x-auto whitespace-pre text-zinc-900 dark:bg-zinc-800 dark:border-transparent dark:text-white">{children}</code>
+          ) : (
+            <code className="bg-zinc-100 border border-zinc-200 rounded px-1 py-0.5 text-xs font-mono text-zinc-900 dark:bg-zinc-800 dark:border-transparent dark:text-white">{children}</code>
+          )
         },
         pre: ({ children }) => <>{children}</>,
-        blockquote: ({ children }) => <blockquote className="border-l-2 border-yellow-500/50 pl-3 text-gray-400 italic my-2">{children}</blockquote>,
-        strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+        blockquote: ({ children }) => <blockquote className="border-l-2 border-amber-500 pl-3 text-zinc-600 dark:text-gray-400 italic my-2">{children}</blockquote>,
+        strong: ({ children }) => <strong className="font-semibold text-zinc-900 dark:text-white">{children}</strong>,
         em: ({ children }) => <em className="italic">{children}</em>,
-        hr: () => <hr className="border-zinc-700 my-3" />,
-        a: ({ href, children }) => <a href={href} className="text-yellow-400 underline hover:text-yellow-300" target="_blank" rel="noopener noreferrer">{children}</a>,
+        hr: () => <hr className="border-zinc-200 dark:border-zinc-700 my-4" />,
       }}
     >
       {content}
@@ -125,11 +220,7 @@ function MarkdownContent({ content }: { content: string }) {
   )
 }
 
-function injectCitations(
-  text: string,
-  citations: Citation[],
-  onJump: (noteId: string) => void,
-): React.ReactNode {
+function injectCitations(text: string, citations: Citation[], onJump: (noteId: string) => void): React.ReactNode {
   const parts = text.split(/(\[\d+\])/g)
   if (parts.length === 1) return text
   return (
@@ -144,7 +235,7 @@ function injectCitations(
               <button
                 key={i}
                 onClick={() => onJump(citation.noteId)}
-                className="inline-flex items-center justify-center rounded px-1 text-[11px] font-semibold bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/30 hover:text-yellow-300 transition-colors mx-0.5 cursor-pointer whitespace-nowrap"
+                className="inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[11px] font-semibold bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 hover:text-amber-800 dark:bg-yellow-500/15 dark:text-yellow-400 dark:hover:bg-yellow-500/30 dark:hover:text-yellow-300 transition-colors mx-0.5 cursor-pointer whitespace-nowrap"
                 title={`Jump to: ${citation.title}`}
               >
                 ({idx})
@@ -158,59 +249,31 @@ function injectCitations(
   )
 }
 
-function processChildren(
-  children: React.ReactNode,
-  citations: Citation[],
-  onJump: (noteId: string) => void,
-): React.ReactNode {
+function processChildren(children: React.ReactNode, citations: Citation[], onJump: (noteId: string) => void): React.ReactNode {
   return (Array.isArray(children) ? children : [children]).map((child, i) => {
     if (typeof child === "string") return <span key={i}>{injectCitations(child, citations, onJump)}</span>
     return child
   })
 }
 
-function MarkdownWithCitations({ content, citations, onJump }: {
-  content: string
-  citations: Citation[]
-  onJump: (noteId: string) => void
-}) {
+function MarkdownWithCitations({ content, citations, onJump }: { content: string; citations: Citation[]; onJump: (noteId: string) => void }) {
   const inject = (children: React.ReactNode) => processChildren(children, citations, onJump)
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{inject(children)}</p>,
-        h1: ({ children }) => <h1 className="text-lg font-bold mb-2 mt-3 first:mt-0">{inject(children)}</h1>,
-        h2: ({ children }) => <h2 className="text-base font-bold mb-2 mt-3 first:mt-0">{inject(children)}</h2>,
-        h3: ({ children }) => <h3 className="text-sm font-bold mb-1 mt-2 first:mt-0">{inject(children)}</h3>,
-        ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
-        ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
+        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed text-zinc-800 dark:text-zinc-200">{inject(children)}</p>,
+        h1: ({ children }) => <h1 className="text-base font-bold mb-2 mt-3 first:mt-0 text-zinc-900 dark:text-white">{inject(children)}</h1>,
+        h2: ({ children }) => <h2 className="text-sm font-bold mb-2 mt-3 first:mt-0 text-zinc-900 dark:text-white">{inject(children)}</h2>,
+        h3: ({ children }) => <h3 className="text-xs font-bold mb-1 mt-2 first:mt-0 text-zinc-900 dark:text-white">{inject(children)}</h3>,
+        ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-0.5 text-zinc-800 dark:text-zinc-200">{children}</ul>,
+        ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-0.5 text-zinc-800 dark:text-zinc-200">{children}</ol>,
         li: ({ children }) => <li className="leading-relaxed">{inject(children)}</li>,
-        code: ({ children, className }) => {
-          const isBlock = className?.includes("language-")
-          return isBlock
-            ? <code className="block bg-zinc-800 rounded p-2 text-xs font-mono my-2 overflow-x-auto whitespace-pre">{children}</code>
-            : <code className="bg-zinc-800 rounded px-1 py-0.5 text-xs font-mono">{children}</code>
-        },
-        pre: ({ children }) => <>{children}</>,
-        blockquote: ({ children }) => <blockquote className="border-l-2 border-yellow-500/50 pl-3 text-gray-400 italic my-2">{children}</blockquote>,
-        strong: ({ children }) => <strong className="font-semibold text-white">{inject(children)}</strong>,
-        em: ({ children }) => <em className="italic">{inject(children)}</em>,
-        hr: () => <hr className="border-zinc-700 my-3" />,
-        a: ({ href, children }) => <a href={href} className="text-yellow-400 underline hover:text-yellow-300" target="_blank" rel="noopener noreferrer">{children}</a>,
       }}
     >
       {content}
     </ReactMarkdown>
   )
-}
-
-function renderWithCitations(
-  content: string,
-  citations: Citation[],
-  onJump: (noteId: string) => void,
-) {
-  return <MarkdownWithCitations content={content} citations={citations} onJump={onJump} />
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -221,18 +284,243 @@ export function NotesApp() {
   const [authChecked, setAuthChecked] = useState(false)
   const [pinLoginOpen, setPinLoginOpen] = useState(false)
   const [hasPin, setHasPin] = useState(false)
+
+  // Notes state
   const [localNotes, setLocalNotes] = useState<DecryptedNoteWithMeta[]>([])
   const [selectedNote, setSelectedNote] = useState<DecryptedNoteWithMeta | null>(null)
+  const [selectedFolder, setSelectedFolder] = useState<string>("all")
   const [searchQuery, setSearchQuery] = useState("")
   const [isMobile, setIsMobile] = useState(false)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(240)
+  const isResizingSidebarRef = useRef(false)
   const [activeTab, setActiveTab] = useState<"notes" | "agent">("notes")
   const [notePreview, setNotePreview] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle") // Keep for auto-save logic
   const [pendingChanges, setPendingChanges] = useState<DecryptedNoteWithMeta | null>(null)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [limitError, setLimitError] = useState<string | null>(null)
   const [silenceTimeoutSec] = useState(() => getSilenceTimeout())
   const [transcriptionLang, setTranscriptionLang] = useState("en")
+
+  // Folder & Tag Management
+  const [folders, setFolders] = useState<FolderItem[]>([])
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false)
+  const [inlineFolderName, setInlineFolderName] = useState("New folder")
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
+  const [editingFolderName, setEditingFolderName] = useState("")
+  const [folderActionMenuId, setFolderActionMenuId] = useState<string | null>(null)
+  const [movingFolder, setMovingFolder] = useState<FolderItem | null>(null)
+  const [draggedFolderId, setDraggedFolderId] = useState<string | null>(null)
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null)
+  const [folderShareToast, setFolderShareToast] = useState<string | null>(null)
+  const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<string>>(new Set())
+  const [allAvailableTags, setAllAvailableTags] = useState<string[]>([])
+  const [tagColors, setTagColors] = useState<Record<string, string>>({})
+  const [selectedTagColor, setSelectedTagColor] = useState<string>(APPLE_TAG_COLORS[4].color) // blue default
+  const [tagInputOpen, setTagInputOpen] = useState(false)
+  const tagAddButtonRef = useRef<HTMLButtonElement>(null)
+  const [newTagInput, setNewTagInput] = useState("")
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+
+  // Spotlight & Main Search states
+  const [spotlightOpen, setSpotlightOpen] = useState(false)
+  const mainSearchInputRef = useRef<HTMLInputElement>(null)
+  const editorTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Share modal target state
+  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null)
+
+  // Filter modal state
+  const [filterModalOpen, setFilterModalOpen] = useState(false)
+  const [noteFilters, setNoteFilters] = useState<NoteFilterCriteria>(EMPTY_NOTE_FILTERS)
+  const filterButtonRef = useRef<HTMLButtonElement>(null)
+
+  // Speaker & Transcription state
+  const [speakerProfiles, setSpeakerProfiles] = useState<SpeakerProfile[]>([])
+  const [transcriptionSidebarOpen, setTranscriptionSidebarOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  // Load speaker profiles, folders, tags on mount
+  useEffect(() => {
+    setSpeakerProfiles(getStoredSpeakers())
+    setFolders(getStoredFolders())
+    setAllAvailableTags(getStoredTags())
+    setTagColors(getStoredTagColors())
+  }, [])
+
+  // Close folder action menu when clicking outside
+  useEffect(() => {
+    if (!folderActionMenuId) return
+    const handleClickOutside = () => setFolderActionMenuId(null)
+    window.addEventListener("click", handleClickOutside)
+    return () => window.removeEventListener("click", handleClickOutside)
+  }, [folderActionMenuId])
+
+  // Global Keyboard Shortcuts: ESC, Cmd+Space / Ctrl+Space, Cmd+F / Ctrl+F
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // 1. Cmd + Space or Ctrl + Space: Spotlight quick search
+      if ((e.metaKey || e.ctrlKey) && (e.code === "Space" || e.key === " ")) {
+        e.preventDefault()
+        setSpotlightOpen((prev) => !prev)
+        return
+      }
+
+      // 2. Cmd + F or Ctrl + F: Focus on main note search
+      if ((e.metaKey || e.ctrlKey) && (e.key === "f" || e.key === "F")) {
+        e.preventDefault()
+        setActiveTab("notes")
+        setTimeout(() => {
+          mainSearchInputRef.current?.focus()
+          mainSearchInputRef.current?.select()
+        }, 10)
+        return
+      }
+
+      // 3. ESC key: Close modals, dropdowns, searches, or blur active text inputs
+      if (e.key === "Escape") {
+        if (spotlightOpen) {
+          e.preventDefault()
+          setSpotlightOpen(false)
+          return
+        }
+
+        if (authOpen || pinLoginOpen || shareModalOpen || settingsOpen || filterModalOpen || movingFolder) {
+          e.preventDefault()
+          setAuthOpen(false)
+          setPinLoginOpen(false)
+          setShareModalOpen(false)
+          setShareTarget(null)
+          setSettingsOpen(false)
+          setFilterModalOpen(false)
+          setMovingFolder(null)
+          return
+        }
+
+        if (folderActionMenuId || moreMenuOpen || tagInputOpen) {
+          e.preventDefault()
+          setFolderActionMenuId(null)
+          setMoreMenuOpen(false)
+          setTagInputOpen(false)
+          return
+        }
+
+        if (isCreatingFolder || editingFolderId) {
+          e.preventDefault()
+          setIsCreatingFolder(false)
+          setEditingFolderId(null)
+          return
+        }
+
+        if (searchQuery || document.activeElement === mainSearchInputRef.current) {
+          e.preventDefault()
+          setSearchQuery("")
+          mainSearchInputRef.current?.blur()
+          return
+        }
+
+        // Quit editing active text inputs
+        if (document.activeElement && document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur()
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown)
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown)
+  }, [
+    spotlightOpen,
+    searchQuery,
+    authOpen,
+    pinLoginOpen,
+    shareModalOpen,
+    settingsOpen,
+    filterModalOpen,
+    movingFolder,
+    folderActionMenuId,
+    moreMenuOpen,
+    tagInputOpen,
+    isCreatingFolder,
+    editingFolderId,
+  ])
+
+  // Collaborator management handlers
+  const handleUpdateCollaborators = (updated: SharedCollaborator[]) => {
+    if (!shareTarget) return
+
+    if (shareTarget.type === "folder") {
+      const updatedFolders = updateFolderCollaborators(shareTarget.id, updated)
+      setFolders(updatedFolders)
+      setShareTarget((prev) => (prev && prev.type === "folder" ? { ...prev, sharedWith: updated } : prev))
+    } else if (shareTarget.type === "note") {
+      if (!selectedNote) return
+      const updatedNote = { ...selectedNote, sharedWith: updated, date: new Date() }
+      setLocalNotes((prev) => prev.map((n) => (n.id === updatedNote.id ? updatedNote : n)))
+      setSelectedNote(updatedNote)
+      setPendingChanges(updatedNote)
+      setShareTarget((prev) => (prev && prev.type === "note" ? { ...prev, sharedWith: updated } : prev))
+    }
+  }
+
+  const handleOpenShareNote = () => {
+    if (!selectedNote) return
+    setShareTarget({
+      type: "note",
+      id: selectedNote.id,
+      title: selectedNote.title,
+      content: selectedNote.content,
+      tags: selectedNote.tags,
+      audioRecording: selectedNote.audioRecording,
+      transcriptSegments: selectedNote.transcriptSegments,
+      sharedWith: selectedNote.sharedWith,
+    })
+    setShareModalOpen(true)
+    setMoreMenuOpen(false)
+  }
+
+  const handleOpenShareFolder = (folder: FolderItem) => {
+    const notesInFolder = localNotes.filter(
+      (n) => (n.folder || "all").toLowerCase() === folder.id.toLowerCase()
+    )
+    setShareTarget({
+      type: "folder",
+      id: folder.id,
+      name: folder.name,
+      notes: notesInFolder,
+      sharedWith: folder.sharedWith,
+    })
+    setShareModalOpen(true)
+    setFolderActionMenuId(null)
+  }
+
+  // Render collaborator avatars helper
+  const renderCollaboratorAvatars = (collaborators?: SharedCollaborator[], max: number = 3) => {
+    if (!collaborators || collaborators.length === 0) return null
+    const visible = collaborators.slice(0, max)
+    const extra = collaborators.length - max
+
+    return (
+      <div
+        className="flex -space-x-1.5 items-center shrink-0"
+        title={`Shared with: ${collaborators.map((c) => `${c.name} (${c.permission})`).join(", ")}`}
+      >
+        {visible.map((c) => (
+          <div
+            key={c.id}
+            className="w-4 h-4 rounded-full text-white text-[8px] font-bold flex items-center justify-center ring-1 ring-white dark:ring-zinc-900 shrink-0 uppercase shadow-2xs"
+            style={{ backgroundColor: c.avatar || "#3b82f6" }}
+          >
+            {c.name.slice(0, 1)}
+          </div>
+        ))}
+        {extra > 0 && (
+          <div className="w-4 h-4 rounded-full bg-zinc-700 text-white text-[8px] font-medium flex items-center justify-center ring-1 ring-white dark:ring-zinc-900 shrink-0">
+            +{extra}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   // ── Agent / AI chat state ─────────────────────────────────────────────────
   const [chatConversations, setChatConversations] = useState<{ id: string; title: string; updatedAt: string }[]>([])
@@ -242,35 +530,27 @@ export function NotesApp() {
   const [chatLoading, setChatLoading] = useState(false)
   const chatScrollRef = useRef<HTMLDivElement>(null)
 
-  // Snapshot of note content when recording starts — transcription appends to this
+  // Snapshot of note content when recording starts
   const recordingBaseContentRef = useRef<string>("")
-
-  // Encryption key derived from user's password (set during login)
   const encryptionPassword = user?.encryptionKey || ""
-
-  // Persisted across effect re-runs so a user-state change cannot reset the clock
   const hiddenAtRef = useRef<number | null>(null)
 
-  // Tab-visibility auto-lock: lock based on how long the tab was hidden
+  // Auto-lock visibility change
   useEffect(() => {
     if (!user?.encryptionKey) return
 
     const applyLock = (hiddenDuration: number) => {
       if (hiddenDuration >= LOGOUT_TIMEOUT) {
-        // Hidden > 12 h → full logout
         setUser({ ...user, encryptionKey: undefined })
       } else if (hiddenDuration >= PIN_TIMEOUT) {
-        // Hidden 1 h – 12 h → show PIN login
         const pinData = getPinData()
         if (pinData && pinData.email === user.email) {
           setUser({ ...user, encryptionKey: undefined })
           setPinLoginOpen(true)
         } else {
-          // No PIN set → full logout
           setUser({ ...user, encryptionKey: undefined })
         }
       }
-      // Hidden < 1 h → do nothing, notes remain accessible
     }
 
     const handleVisibilityChange = () => {
@@ -284,35 +564,23 @@ export function NotesApp() {
     }
 
     document.addEventListener("visibilitychange", handleVisibilityChange)
-
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange)
-    }
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange)
   }, [user])
 
-  // Check for existing session and PIN on mount
+  // Check session on mount
   useEffect(() => {
     const checkSession = async () => {
       try {
-        // Check for PIN data first
         const pinData = getPinData()
-        if (pinData) {
-          setHasPin(true)
-        }
+        if (pinData) setHasPin(true)
 
         const res = await fetch("/api/auth/session", { credentials: "include" })
         const data = await res.json()
 
         if (data.user && data.user.encryptionKey) {
-          // User has valid session with encryption key - fully authenticated
           setUser(data.user)
-          // Check if PIN exists for this user
-          if (pinData && pinData.email === data.user.email) {
-            setHasPin(true)
-          }
+          if (pinData && pinData.email === data.user.email) setHasPin(true)
         } else if (data.user) {
-          // User has session but no encryption key
-          // Check if they have a valid PIN for quick access
           if (pinData && pinData.email === data.user.email) {
             setUser({ ...data.user, encryptionKey: undefined })
             setPinLoginOpen(true)
@@ -329,23 +597,19 @@ export function NotesApp() {
     checkSession()
   }, [])
 
-  // Fetch encrypted notes from S3 (only when user is fully authenticated with encryption key)
+  // SWR fetch for real user notes
   const { data, isLoading, mutate } = useSWR<{
     notes: EncryptedNoteFromServer[]
     encrypted: boolean
     authenticated?: boolean
-  }>(
-    user?.encryptionKey ? "/api/notes" : null,
-    fetcher
-  )
+  }>(user?.encryptionKey ? "/api/notes" : null, fetcher)
 
-  // Decrypt notes when data arrives
+  // Decrypt notes when user data arrives
   useEffect(() => {
     if (!data?.notes || !encryptionPassword) return
 
     const decryptAllNotes = async () => {
       const decrypted: DecryptedNoteWithMeta[] = []
-
       for (const encNote of data.notes) {
         try {
           const decryptedContent = await decryptNote(encNote.encryptedData, encryptionPassword)
@@ -353,35 +617,44 @@ export function NotesApp() {
             id: encNote.id,
             title: decryptedContent.title,
             content: decryptedContent.content,
+            tags: decryptedContent.tags || [],
+            transcriptSegments: decryptedContent.transcriptSegments || [],
+            audioRecording: decryptedContent.audioRecording,
             attachments: decryptedContent.attachments,
             date: new Date(encNote.date),
-            folder: encNote.folder,
+            folder: !encNote.folder || encNote.folder === "inbox" ? "all" : encNote.folder,
           })
         } catch {
-          // Note couldn't be decrypted (wrong key or corrupted data)
           console.error("Failed to decrypt note:", encNote.id)
         }
       }
 
-      setLocalNotes(decrypted)
+      if (decrypted.length > 0) {
+        setLocalNotes(decrypted)
+        setSelectedNote(decrypted[0])
+      }
     }
 
     decryptAllNotes()
   }, [data, encryptionPassword])
 
-  // Debounce pending changes for auto-save (500ms)
+  // Debounced auto-save
   const debouncedNote = useDebounce(pendingChanges, 500)
 
-  // Auto-save effect with encryption
   useEffect(() => {
     if (!debouncedNote || !encryptionPassword) return
 
     const saveNoteEncrypted = async () => {
-      setSaveStatus("saving")
-
       try {
         const encrypted = await encryptNote(
-          { title: debouncedNote.title, content: debouncedNote.content, attachments: debouncedNote.attachments },
+          {
+            title: debouncedNote.title,
+            content: debouncedNote.content,
+            tags: debouncedNote.tags,
+            transcriptSegments: debouncedNote.transcriptSegments,
+            audioRecording: debouncedNote.audioRecording,
+            attachments: debouncedNote.attachments,
+          },
           encryptionPassword
         )
 
@@ -392,39 +665,40 @@ export function NotesApp() {
           body: JSON.stringify({
             id: debouncedNote.id,
             encryptedData: encrypted,
-            date: debouncedNote.date instanceof Date
-              ? debouncedNote.date.toISOString()
-              : debouncedNote.date,
+            date: debouncedNote.date instanceof Date ? debouncedNote.date.toISOString() : debouncedNote.date,
             folder: debouncedNote.folder,
           }),
         })
 
-        setSaveStatus("saved")
-        setTimeout(() => setSaveStatus("idle"), 1500)
-
-        // Re-index this note in the vector store so AI chat stays up to date
+        // Vector store index
         fetch("/api/notes/index", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ notes: [{ id: debouncedNote.id, title: debouncedNote.title, content: debouncedNote.content, attachments: debouncedNote.attachments }] }),
+          body: JSON.stringify({
+            notes: [
+              {
+                id: debouncedNote.id,
+                title: debouncedNote.title,
+                content: debouncedNote.content,
+                attachments: debouncedNote.attachments,
+              },
+            ],
+          }),
         }).catch(() => { })
       } catch {
-        setSaveStatus("idle")
+        // Silent fail
       }
     }
 
     saveNoteEncrypted()
   }, [debouncedNote, encryptionPassword])
 
-  // Refetch when user logs in with encryption key
   useEffect(() => {
-    if (user?.encryptionKey) {
-      mutate()
-    }
+    if (user?.encryptionKey) mutate()
   }, [user?.encryptionKey, mutate])
 
-  // Mobile check
+  // Screen resize handler
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768)
     check()
@@ -432,249 +706,210 @@ export function NotesApp() {
     return () => window.removeEventListener("resize", check)
   }, [])
 
+  const handleSidebarMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isResizingSidebarRef.current = true
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizingSidebarRef.current) return
+      const newWidth = moveEvent.clientX
+      if (newWidth < 100) {
+        setIsSidebarCollapsed(true)
+      } else {
+        setIsSidebarCollapsed(false)
+        setSidebarWidth(Math.min(380, Math.max(180, newWidth)))
+      }
+    }
+
+    const handleMouseUp = () => {
+      isResizingSidebarRef.current = false
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+      window.removeEventListener("mousemove", handleMouseMove)
+      window.removeEventListener("mouseup", handleMouseUp)
+    }
+
+    window.addEventListener("mousemove", handleMouseMove)
+    window.addEventListener("mouseup", handleMouseUp)
+  }, [])
+
   useEffect(() => {
     setTranscriptionLang(getTranscriptionLang())
   }, [])
 
-  // Load chat conversation history when switching to agent tab
+  // Agent chat history
   useEffect(() => {
     if (activeTab !== "agent" || !user?.encryptionKey) return
     fetch("/api/chat/history", { credentials: "include" })
       .then((r) => r.json())
-      .then((data) => {
-        if (data.conversations?.length) {
-          setChatConversations(data.conversations)
-          loadChatConversation(data.conversations[0].id)
+      .then((histData) => {
+        if (histData.conversations?.length) {
+          setChatConversations(histData.conversations)
+          loadChatConversation(histData.conversations[0].id)
         }
       })
       .catch(() => { })
-    // Re-index notes
-    if (localNotes.length > 0) {
-      fetch("/api/notes/index", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ notes: localNotes.map(n => ({ id: n.id, title: n.title, content: n.content, attachments: n.attachments })) }),
-      }).catch(() => { })
-    }
   }, [activeTab, user?.encryptionKey])
 
-  // Keep the newest message around 60% of the chat viewport so it stays visible above the composer.
-  useEffect(() => {
-    if (activeTab !== "agent") return
-    const scrollContainer = chatScrollRef.current
-    if (!scrollContainer) return
+  // ── Note mutations ────────────────────────────────────────────────────────
 
-    const frame = requestAnimationFrame(() => {
-      const targetScrollTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight * 0.6)
-      scrollContainer.scrollTo({ top: targetScrollTop, behavior: "smooth" })
-    })
-
-    return () => cancelAnimationFrame(frame)
-  }, [chatMessages, activeTab])
-
-  const formatDate = (date: Date) => {
-    const today = new Date()
-    const yesterday = new Date(today)
-    yesterday.setDate(yesterday.getDate() - 1)
-    if (date.toDateString() === today.toDateString()) return "Today"
-    if (date.toDateString() === yesterday.toDateString()) return "Yesterday"
-    return date.toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" })
+  const handleTitleChange = (title: string) => {
+    if (!selectedNote) return
+    const updated = { ...selectedNote, title, date: new Date() }
+    setLocalNotes(localNotes.map((n) => (n.id === selectedNote.id ? updated : n)))
+    setSelectedNote(updated)
+    setPendingChanges(updated)
   }
-
-  const filteredNotes = localNotes.filter(
-    (n) =>
-      searchQuery === "" ||
-      n.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      n.content.toLowerCase().includes(searchQuery.toLowerCase())
-  )
-
-  const handleNoteSelect = useCallback((note: DecryptedNoteWithMeta) => {
-    setSelectedNote(note)
-  }, [])
-
-  const handleJumpToNote = useCallback((noteId: string) => {
-    const note = localNotes.find((n) => n.id === noteId)
-    if (note) setSelectedNote(note)
-  }, [localNotes])
 
   const handleNoteChange = (content: string) => {
     if (!selectedNote) return
-
-    // Check content length limit
     if (content.length > MAX_CONTENT_LENGTH) {
       setLimitError(`Note content exceeds the maximum of ${MAX_CONTENT_LENGTH.toLocaleString()} characters`)
       return
     }
     setLimitError(null)
-
-    const updatedNote = { ...selectedNote, content, date: new Date() }
-    const updated = localNotes.map((n) => (n.id === selectedNote.id ? updatedNote : n))
-    setLocalNotes(updated)
-    setSelectedNote(updatedNote)
-    setPendingChanges(updatedNote)
+    const updated = { ...selectedNote, content, date: new Date() }
+    setLocalNotes(localNotes.map((n) => (n.id === selectedNote.id ? updated : n)))
+    setSelectedNote(updated)
+    setPendingChanges(updated)
   }
 
-  const handleTitleChange = (title: string) => {
+  const handleMoveToFolder = (targetFolderId: string) => {
     if (!selectedNote) return
-    const updatedNote = { ...selectedNote, title, date: new Date() }
-    const updated = localNotes.map((n) => (n.id === selectedNote.id ? updatedNote : n))
-    setLocalNotes(updated)
-    setSelectedNote(updatedNote)
-    setPendingChanges(updatedNote)
-  }
-
-  const addFiles = async (files: File[]) => {
-    if (!selectedNote) return
-    const newAttachments = await Promise.all(
-      files.map(async (file) => {
-        const buffer = await file.arrayBuffer()
-        let base64 = ""
-        if (file.type.startsWith("image/") || file.type.startsWith("audio/")) {
-          const bytes = new Uint8Array(buffer)
-          let binary = ""
-          for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i])
-          }
-          base64 = `data:${file.type};base64,${btoa(binary)}`
-        }
-        let type: "image" | "text" | "audio" = "text"
-        if (file.type.startsWith("image/")) type = "image"
-        if (file.type.startsWith("audio/")) type = "audio"
-        return {
-          id: Date.now().toString() + Math.random().toString(36).slice(2, 7),
-          name: file.name,
-          type,
-          size: file.size,
-          dataUrl: base64,
-        }
-      })
-    )
-    const updatedNote = {
-      ...selectedNote,
-      attachments: [...(selectedNote.attachments || []), ...newAttachments],
-      date: new Date(),
-    }
-    const updated = localNotes.map((n) => (n.id === selectedNote.id ? updatedNote : n))
-    setLocalNotes(updated)
-    setSelectedNote(updatedNote)
-    setPendingChanges(updatedNote)
-  }
-
-  const handlePaste = (e: React.ClipboardEvent) => {
-    if (e.clipboardData.files.length > 0) {
-      e.preventDefault()
-      addFiles(Array.from(e.clipboardData.files))
-    }
-  }
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    if (e.dataTransfer.files.length > 0) {
-      addFiles(Array.from(e.dataTransfer.files))
-    }
-  }
-
-  const removeAttachment = (attId: string) => {
-    if (!selectedNote) return
-    const updatedNote = {
-      ...selectedNote,
-      attachments: (selectedNote.attachments || []).filter((a) => a.id !== attId),
-      date: new Date(),
-    }
-    const updated = localNotes.map((n) => (n.id === selectedNote.id ? updatedNote : n))
-    setLocalNotes(updated)
-    setSelectedNote(updatedNote)
-    setPendingChanges(updatedNote)
+    const updated = { ...selectedNote, folder: targetFolderId, date: new Date() }
+    setLocalNotes(localNotes.map((n) => (n.id === selectedNote.id ? updated : n)))
+    setSelectedNote(updated)
+    setPendingChanges(updated)
+    setMoreMenuOpen(false)
   }
 
   const handleCreateNote = async () => {
-    if (!encryptionPassword) {
-      setAuthOpen(true)
-      return
-    }
-
-    // Check notes limit
     if (localNotes.length >= MAX_NOTES_PER_USER) {
-      setLimitError(`You have reached the maximum of ${MAX_NOTES_PER_USER} notes. Please delete some notes to create new ones.`)
+      setLimitError(`You have reached the maximum of ${MAX_NOTES_PER_USER} notes.`)
       return
     }
     setLimitError(null)
 
+    // Determine target folder
+    const targetFolder = selectedFolder === "trash" || selectedFolder === "archive" ? "all" : selectedFolder
+
     const newNote: DecryptedNoteWithMeta = {
       id: Date.now().toString(),
-      title: "New Note",
+      title: "",
       content: "",
       date: new Date(),
-      folder: "notes",
+      folder: targetFolder,
       attachments: [],
+      tags: [],
     }
 
     setLocalNotes([newNote, ...localNotes])
     setSelectedNote(newNote)
 
-    try {
-      const encrypted = await encryptNote(
-        { title: newNote.title, content: newNote.content, attachments: newNote.attachments },
-        encryptionPassword
-      )
-
-      const res = await fetch("/api/notes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          id: newNote.id,
-          encryptedData: encrypted,
-          date: newNote.date.toISOString(),
-          folder: newNote.folder,
-        }),
-      })
-
-      if (!res.ok) {
-        const data = await res.json()
-        if (data.code === "NOTES_LIMIT_REACHED") {
-          setLimitError(data.message)
-          // Remove the note from local state
-          setLocalNotes(prev => prev.filter(n => n.id !== newNote.id))
-          setSelectedNote(null)
-        }
+    if (encryptionPassword) {
+      try {
+        const encrypted = await encryptNote(
+          { title: newNote.title, content: newNote.content, attachments: newNote.attachments },
+          encryptionPassword
+        )
+        await fetch("/api/notes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            id: newNote.id,
+            encryptedData: encrypted,
+            date: newNote.date.toISOString(),
+            folder: newNote.folder,
+          }),
+        })
+      } catch {
+        // Silent fail
       }
-    } catch {
-      // Silent fail
     }
   }
 
   const handleDeleteNote = async () => {
     if (!selectedNote) return
 
-    setLocalNotes(localNotes.filter((n) => n.id !== selectedNote.id))
-    setSelectedNote(null)
+    // If not in trash, move to trash first
+    if (selectedNote.folder !== "trash") {
+      handleMoveToFolder("trash")
+      return
+    }
+
+    // Permanent delete
+    await handlePermanentDeleteNote()
+  }
+
+  const handleRestoreNote = () => {
+    if (!selectedNote) return
+    const updated = { ...selectedNote, folder: "all", date: new Date() }
+    setLocalNotes((prev) => prev.map((n) => (n.id === selectedNote.id ? updated : n)))
+    setSelectedNote(updated)
+    setPendingChanges(updated)
+  }
+
+  const handlePermanentDeleteNote = async () => {
+    if (!selectedNote) return
+    if (!confirm("Permanently delete this note? This action cannot be undone.")) return
 
     const deletedId = selectedNote.id
-    try {
-      await fetch(`/api/notes?noteId=${deletedId}`, { method: "DELETE", credentials: "include" })
-      // Remove from vector index so AI chat no longer references this note
-      fetch("/api/notes/index", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ noteId: deletedId }),
-      }).catch(() => { })
-    } catch {
-      // Silent fail
+    const updated = localNotes.filter((n) => n.id !== deletedId)
+    setLocalNotes(updated)
+    setSelectedNote(updated.length > 0 ? updated[0] : null)
+
+    if (encryptionPassword) {
+      try {
+        await fetch(`/api/notes?noteId=${deletedId}`, { method: "DELETE", credentials: "include" })
+        fetch("/api/notes/index", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ noteId: deletedId }),
+        }).catch(() => { })
+      } catch {
+        // Silent fail
+      }
     }
   }
 
-  // Voice recorder handlers
+  const handleEmptyTrash = async () => {
+    const trashedNotes = localNotes.filter((n) => n.folder === "trash")
+    if (trashedNotes.length === 0) return
+    if (!confirm(`Are you sure you want to permanently delete all ${trashedNotes.length} note(s) in Trash? This action cannot be undone.`)) return
+
+    const trashedIds = new Set(trashedNotes.map((n) => n.id))
+    const updated = localNotes.filter((n) => !trashedIds.has(n.id))
+    setLocalNotes(updated)
+    setSelectedNote(updated.length > 0 ? updated[0] : null)
+
+    if (encryptionPassword) {
+      for (const note of trashedNotes) {
+        try {
+          fetch(`/api/notes?noteId=${note.id}`, { method: "DELETE", credentials: "include" }).catch(() => { })
+          fetch("/api/notes/index", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ noteId: note.id }),
+          }).catch(() => { })
+        } catch { }
+      }
+    }
+  }
+
+  // ── Recording handlers ────────────────────────────────────────────────────
+
   const handleRecordingStart = useCallback(() => {
     recordingBaseContentRef.current = selectedNote?.content ?? ""
     setTranscriptionLang(getTranscriptionLang())
 
-    // Auto-title new notes with recording timestamp
     if (selectedNote && selectedNote.title === "New Note") {
       const now = new Date()
-      const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      const dateStr = formatDateStandard(now)
       const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })
       const title = `Recorded on ${dateStr} ${timeStr}`
       const updated = { ...selectedNote, title, date: now }
@@ -683,30 +918,496 @@ export function NotesApp() {
     }
   }, [selectedNote])
 
-  const handleRecordingStop = useCallback(() => {
-    // nothing extra needed — transcript already committed
-  }, [])
+  const handleRecordingStop = useCallback(() => { }, [])
 
-  const handleTranscriptUpdate = useCallback((transcript: string) => {
+  const handleTranscriptUpdate = useCallback(
+    (transcript: string, segments: TranscriptSegment[], recording?: AudioRecordingData) => {
+      if (!selectedNote) return
+      const base = recordingBaseContentRef.current
+      const separator = base && !base.endsWith("\n") ? "\n\n" : ""
+      const newContent = base + separator + transcript
+      if (newContent.length > MAX_CONTENT_LENGTH) return
+
+      // Register new speakers
+      const currentProfiles = getStoredSpeakers()
+      let profilesChanged = false
+      const updatedProfiles = [...currentProfiles]
+
+      for (const seg of segments) {
+        if (!updatedProfiles.some((p) => p.id === seg.speaker_id)) {
+          updatedProfiles.push({
+            id: seg.speaker_id,
+            name: resolveSpeakerName(seg.speaker_id, updatedProfiles),
+            isCustomNamed: false,
+            voiceSamples: [],
+            usedNoteCount: 1,
+            updatedAt: new Date().toISOString(),
+          })
+          profilesChanged = true
+        }
+      }
+
+      if (profilesChanged) {
+        setSpeakerProfiles(updatedProfiles)
+        saveStoredSpeakers(updatedProfiles)
+      }
+
+      const updated: DecryptedNoteWithMeta = {
+        ...selectedNote,
+        content: newContent,
+        transcriptSegments: segments,
+        audioRecording: recording || selectedNote.audioRecording,
+      }
+      setSelectedNote(updated)
+      setPendingChanges(updated)
+    },
+    [selectedNote]
+  )
+
+  const handleRenameSpeaker = useCallback(
+    (speakerId: string, newName: string, scope: "note" | "global") => {
+      const oldName = resolveSpeakerName(speakerId, speakerProfiles)
+
+      if (scope === "global") {
+        const updatedProfiles = speakerProfiles.map((p) =>
+          p.id === speakerId ? { ...p, name: newName, isCustomNamed: true, updatedAt: new Date().toISOString() } : p
+        )
+        if (!updatedProfiles.some((p) => p.id === speakerId)) {
+          updatedProfiles.push({
+            id: speakerId,
+            name: newName,
+            isCustomNamed: true,
+            voiceSamples: [],
+            updatedAt: new Date().toISOString(),
+          })
+        }
+        setSpeakerProfiles(updatedProfiles)
+        saveStoredSpeakers(updatedProfiles)
+
+        const updatedNotes = localNotes.map((note) => {
+          const hasSpeaker = note.transcriptSegments?.some((s) => s.speaker_id === speakerId)
+          if (hasSpeaker || note.content.includes(oldName)) {
+            const updatedContent = updateNoteTextSpeakerName(note.content, oldName, newName)
+            return { ...note, content: updatedContent, date: new Date() }
+          }
+          return note
+        })
+        setLocalNotes(updatedNotes)
+
+        if (selectedNote) {
+          const currentSelected = updatedNotes.find((n) => n.id === selectedNote.id)
+          if (currentSelected) {
+            setSelectedNote(currentSelected)
+            setPendingChanges(currentSelected)
+          }
+        }
+      } else {
+        if (!selectedNote) return
+        const updatedContent = updateNoteTextSpeakerName(selectedNote.content, oldName, newName)
+        const updatedSegments = (selectedNote.transcriptSegments || []).map((seg) => {
+          if (seg.speaker_id === speakerId) {
+            return { ...seg, speaker_id: `custom_${newName.toLowerCase().replace(/\s+/g, "_")}` }
+          }
+          return seg
+        })
+        const updated: DecryptedNoteWithMeta = {
+          ...selectedNote,
+          content: updatedContent,
+          transcriptSegments: updatedSegments,
+          date: new Date(),
+        }
+        setLocalNotes(localNotes.map((n) => (n.id === selectedNote.id ? updated : n)))
+        setSelectedNote(updated)
+        setPendingChanges(updated)
+      }
+    },
+    [localNotes, selectedNote, speakerProfiles]
+  )
+
+  // ── Tag Handlers ──────────────────────────────────────────────────────────
+
+  const handleToggleTagOnSelectedNote = (tagToToggle: string, colorHex?: string) => {
     if (!selectedNote) return
-    const base = recordingBaseContentRef.current
-    const separator = base && !base.endsWith("\n") ? "\n\n" : ""
-    const newContent = base + separator + transcript
-    if (newContent.length > MAX_CONTENT_LENGTH) return
-    const updated = { ...selectedNote, content: newContent }
-    setSelectedNote(updated)
-    setPendingChanges(updated)
+    const currentTags = selectedNote.tags || []
+    const isAlreadyOnNote = currentTags.some((t) => t.toLowerCase() === tagToToggle.toLowerCase())
+
+    let updatedTags: string[]
+    if (isAlreadyOnNote) {
+      updatedTags = currentTags.filter((t) => t.toLowerCase() !== tagToToggle.toLowerCase())
+    } else {
+      updatedTags = [...currentTags, tagToToggle.trim()]
+      const updatedStoreTags = addStoredTag(tagToToggle.trim(), colorHex)
+      setAllAvailableTags(updatedStoreTags)
+      if (colorHex) {
+        setTagColors(getStoredTagColors())
+      }
+    }
+
+    const updatedNote = { ...selectedNote, tags: updatedTags, date: new Date() }
+    setLocalNotes(localNotes.map((n) => (n.id === selectedNote.id ? updatedNote : n)))
+    setSelectedNote(updatedNote)
+    setPendingChanges(updatedNote)
+  }
+
+  const handleAddTagToSelectedNote = (tagToAdd: string, colorHex?: string) => {
+    handleToggleTagOnSelectedNote(tagToAdd, colorHex)
+  }
+
+  const handleRemoveTagFromSelectedNote = (tagToRemove: string) => {
+    if (!selectedNote) return
+    const currentTags = selectedNote.tags || []
+    const updatedTags = currentTags.filter((t) => t !== tagToRemove)
+    const updatedNote = { ...selectedNote, tags: updatedTags, date: new Date() }
+    setLocalNotes(localNotes.map((n) => (n.id === selectedNote.id ? updatedNote : n)))
+    setSelectedNote(updatedNote)
+    setPendingChanges(updatedNote)
+  }
+
+  // ── Folder Handlers ───────────────────────────────────────────────────────
+
+  const handleStartCreateFolder = () => {
+    setIsCreatingFolder(true)
+    setInlineFolderName("New folder")
+    setEditingFolderId(null)
+    setFolderActionMenuId(null)
+  }
+
+  const handleCommitCreateFolder = () => {
+    if (!isCreatingFolder) return
+    const name = inlineFolderName.trim() || "New folder"
+    const updated = addStoredFolder(name)
+    setFolders(updated)
+    setIsCreatingFolder(false)
+    setInlineFolderName("New folder")
+  }
+
+  const handleCommitRenameFolder = (folderId: string) => {
+    if (editingFolderId !== folderId) return
+    const name = editingFolderName.trim()
+    if (name) {
+      const updated = renameStoredFolder(folderId, name)
+      setFolders(updated)
+    }
+    setEditingFolderId(null)
+  }
+
+  const handleDeleteFolderWithPrompt = (folder: FolderItem) => {
+    if (folder.isSystem) return
+    if (!confirm(`Are you sure you want to delete folder "${folder.name}"? Notes inside will be moved to Trash.`)) return
+
+    setLocalNotes((prev) =>
+      prev.map((n) => (n.folder === folder.id ? { ...n, folder: "trash" } : n))
+    )
+    const updated = deleteStoredFolder(folder.id)
+    setFolders(updated)
+    if (selectedFolder === folder.id) {
+      setSelectedFolder("all")
+    }
+    setFolderActionMenuId(null)
+  }
+
+  const handleArchiveFolderToggle = (folder: FolderItem) => {
+    const updated = archiveStoredFolder(folder.id, !folder.isArchived)
+    setFolders(updated)
+    setFolderActionMenuId(null)
+  }
+
+  const handleShareFolder = (folder: FolderItem) => {
+    const noteCount = getFolderCount(folder.id)
+    const text = `Folder: ${folder.name} (${noteCount} notes)`
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(text).catch(() => { })
+    }
+    setFolderShareToast(`Folder "${folder.name}" share summary copied!`)
+    setTimeout(() => setFolderShareToast(null), 3000)
+    setFolderActionMenuId(null)
+  }
+
+  // Calculate folder counts dynamically
+  const getFolderCount = (folderId: string) => {
+    if (folderId === "all") {
+      return localNotes.filter((n) => n.folder !== "trash" && n.folder !== "archive").length
+    }
+    if (folderId === "trash") {
+      return localNotes.filter((n) => n.folder === "trash").length
+    }
+    if (folderId === "archive") {
+      return localNotes.filter((n) => n.folder === "archive").length
+    }
+    return localNotes.filter((n) => (n.folder || "all").toLowerCase() === folderId.toLowerCase()).length
+  }
+
+  // Render folder icon (uses FolderOpen when folder is opened / expanded)
+  const renderFolderIcon = (icon?: string, isOpened?: boolean) => {
+    switch (icon) {
+      case "all":
+        return <Notebook className="h-4 w-4 text-amber-600 dark:text-yellow-400" />
+      case "archive":
+        return <Archive className="h-4 w-4 text-zinc-500" />
+      case "trash":
+        return <Trash2 className="h-4 w-4 text-zinc-500" />
+      default:
+        return isOpened ? (
+          <FolderOpen className="h-4 w-4 text-amber-500 shrink-0" />
+        ) : (
+          <FolderIcon className="h-4 w-4 text-amber-500/80 shrink-0" />
+        )
+    }
+  }
+
+  // Flattened custom folders for rendering in sidebar (respecting collapsed state)
+  const flattenedCustomFolders = useMemo(() => {
+    return getFlattenedFolderTree(folders, false, collapsedFolderIds)
+  }, [folders, collapsedFolderIds])
+
+  // All custom folders regardless of collapsed state (for Move dialogs and menus)
+  const allCustomFolders = useMemo(() => {
+    return getFlattenedFolderTree(folders, false)
+  }, [folders])
+
+  const archivedFolder = useMemo(
+    () => folders.find((f) => f.id === "archive") || { id: "archive", name: "Archived", icon: "archive" as const, isSystem: true },
+    [folders]
+  )
+  const trashFolder = useMemo(
+    () => folders.find((f) => f.id === "trash") || { id: "trash", name: "Trash", icon: "trash" as const, isSystem: true },
+    [folders]
+  )
+  const rootFolder = useMemo(
+    () => folders.find((f) => f.id === "all") || { id: "all", name: "All Notes", icon: "all" as const, isSystem: true },
+    [folders]
+  )
+
+  // Count records for selected note (for recording icon badge)
+  const noteRecordCount = useMemo(() => {
+    if (!selectedNote) return 0
+    let count = 0
+    if (selectedNote.audioRecording?.dataUrl && selectedNote.audioRecording.dataUrl.trim().length > 0) {
+      count += 1
+    }
+    const audioAttachments = (selectedNote.attachments || []).filter((a) => a.type === "audio")
+    count += audioAttachments.length
+    return count
   }, [selectedNote])
 
-  // ── Chat handlers ─────────────────────────────────────────────────────────
+  // Available speakers for filter modal
+  const availableSpeakerOptions = useMemo<SpeakerOption[]>(() => {
+    const speakerNoteCounts: Record<string, number> = {}
+    for (const note of localNotes) {
+      const noteSpeakers = new Set((note.transcriptSegments || []).map((s) => s.speaker_id))
+      for (const spk of noteSpeakers) {
+        speakerNoteCounts[spk] = (speakerNoteCounts[spk] || 0) + 1
+      }
+    }
 
+    const allIds = Array.from(new Set([...Object.keys(speakerNoteCounts), ...speakerProfiles.map((p) => p.id)]))
+    return allIds.map((id) => ({
+      id,
+      name: resolveSpeakerName(id, speakerProfiles),
+      noteCount: speakerNoteCounts[id] || 0,
+    }))
+  }, [localNotes, speakerProfiles])
+
+  // Available tags for filter modal
+  const filterAvailableTags = useMemo(() => {
+    const tagSet = new Set(allAvailableTags)
+    for (const note of localNotes) {
+      for (const tag of note.tags || []) {
+        tagSet.add(tag)
+      }
+    }
+    return Array.from(tagSet)
+  }, [allAvailableTags, localNotes])
+
+  // Count active filters
+  const activeFilterCount = useMemo(() => {
+    let count = 0
+    if (noteFilters.titleQuery.trim()) count++
+    if (noteFilters.speakerId !== "all") count++
+    if (noteFilters.datePreset && noteFilters.datePreset !== "all") count++
+    else if (noteFilters.dateFrom || noteFilters.dateTo) count++
+    if (noteFilters.content && noteFilters.content !== "all") count++
+    if (noteFilters.selectedTags.length > 0) count += noteFilters.selectedTags.length
+    return count
+  }, [noteFilters])
+
+  // Matching notes calculation for modal preview
+  const calculateFilteredMatches = useCallback(
+    (criteria: NoteFilterCriteria) => {
+      return localNotes.filter((n) => {
+        // Folder filter
+        if (selectedFolder === "all") {
+          if (n.folder === "trash" || n.folder === "archive") return false
+        } else if (n.folder?.toLowerCase() !== selectedFolder.toLowerCase()) {
+          return false
+        }
+
+        // Search query filter
+        if (searchQuery.trim() !== "") {
+          const q = searchQuery.toLowerCase()
+          const displayTitle = getNoteDisplayTitle(n)
+          const matches =
+            displayTitle.toLowerCase().includes(q) ||
+            n.content.toLowerCase().includes(q) ||
+            (n.tags || []).some((t) => t.toLowerCase().includes(q))
+          if (!matches) return false
+        }
+
+        // Title filter
+        if (criteria.titleQuery.trim() !== "") {
+          const displayTitle = getNoteDisplayTitle(n)
+          if (!displayTitle.toLowerCase().includes(criteria.titleQuery.trim().toLowerCase())) {
+            return false
+          }
+        }
+
+        // Date From filter
+        if (criteria.dateFrom) {
+          const noteDate = new Date(n.date)
+          if (isNaN(noteDate.getTime())) return false
+          const fromDate = new Date(criteria.dateFrom)
+          fromDate.setHours(0, 0, 0, 0)
+          if (noteDate < fromDate) return false
+        }
+
+        // Date To filter
+        if (criteria.dateTo) {
+          const noteDate = new Date(n.date)
+          if (isNaN(noteDate.getTime())) return false
+          const toDate = new Date(criteria.dateTo)
+          toDate.setHours(23, 59, 59, 999)
+          if (noteDate > toDate) return false
+        }
+
+        // Content filter
+        if (criteria.content === "audio") {
+          const hasAudio = Boolean(n.audioRecording?.dataUrl && n.audioRecording.dataUrl.trim().length > 0) ||
+            (n.attachments || []).some((a) => a.type === "audio")
+          if (!hasAudio) return false
+        } else if (criteria.content === "transcript") {
+          const hasTranscript = (n.transcriptSegments || []).length > 0
+          if (!hasTranscript) return false
+        } else if (criteria.content === "text_only") {
+          const hasAudio = Boolean(n.audioRecording?.dataUrl && n.audioRecording.dataUrl.trim().length > 0) ||
+            (n.attachments || []).some((a) => a.type === "audio")
+          const hasTranscript = (n.transcriptSegments || []).length > 0
+          if (hasAudio || hasTranscript) return false
+        }
+
+        // Speaker filter
+        if (criteria.speakerId && criteria.speakerId !== "all") {
+          const hasSpeaker = (n.transcriptSegments || []).some(
+            (s) => s.speaker_id === criteria.speakerId
+          )
+          if (!hasSpeaker) return false
+        }
+
+        // Tags filter
+        if (criteria.selectedTags.length > 0) {
+          const noteTags = (n.tags || []).map((t) => t.toLowerCase())
+          const hasMatchingTag = criteria.selectedTags.some((st) =>
+            noteTags.includes(st.toLowerCase())
+          )
+          if (!hasMatchingTag) return false
+        }
+
+        return true
+      }).length
+    },
+    [localNotes, selectedFolder, searchQuery]
+  )
+
+  // Filter notes by search, folder, and advanced filter criteria
+  const filteredNotes = useMemo(() => {
+    return localNotes.filter((n) => {
+      // 1. Folder filter
+      if (selectedFolder === "all") {
+        if (n.folder === "trash" || n.folder === "archive") return false
+      } else if (n.folder?.toLowerCase() !== selectedFolder.toLowerCase()) {
+        return false
+      }
+
+      // 2. Search query filter
+      if (searchQuery.trim() !== "") {
+        const q = searchQuery.toLowerCase()
+        const displayTitle = getNoteDisplayTitle(n)
+        const matches =
+          displayTitle.toLowerCase().includes(q) ||
+          n.content.toLowerCase().includes(q) ||
+          (n.tags || []).some((t) => t.toLowerCase().includes(q))
+        if (!matches) return false
+      }
+
+      // 3. Title filter
+      if (noteFilters.titleQuery.trim() !== "") {
+        const displayTitle = getNoteDisplayTitle(n)
+        if (!displayTitle.toLowerCase().includes(noteFilters.titleQuery.trim().toLowerCase())) {
+          return false
+        }
+      }
+
+      // 4. Date From filter
+      if (noteFilters.dateFrom) {
+        const noteDate = new Date(n.date)
+        if (isNaN(noteDate.getTime())) return false
+        const fromDate = new Date(noteFilters.dateFrom)
+        fromDate.setHours(0, 0, 0, 0)
+        if (noteDate < fromDate) return false
+      }
+
+      // 5. Date To filter
+      if (noteFilters.dateTo) {
+        const noteDate = new Date(n.date)
+        if (isNaN(noteDate.getTime())) return false
+        const toDate = new Date(noteFilters.dateTo)
+        toDate.setHours(23, 59, 59, 999)
+        if (noteDate > toDate) return false
+      }
+
+      // Content filter
+      if (noteFilters.content === "audio") {
+        const hasAudio = Boolean(n.audioRecording?.dataUrl && n.audioRecording.dataUrl.trim().length > 0) ||
+          (n.attachments || []).some((a) => a.type === "audio")
+        if (!hasAudio) return false
+      } else if (noteFilters.content === "transcript") {
+        const hasTranscript = (n.transcriptSegments || []).length > 0
+        if (!hasTranscript) return false
+      } else if (noteFilters.content === "text_only") {
+        const hasAudio = Boolean(n.audioRecording?.dataUrl && n.audioRecording.dataUrl.trim().length > 0) ||
+          (n.attachments || []).some((a) => a.type === "audio")
+        const hasTranscript = (n.transcriptSegments || []).length > 0
+        if (hasAudio || hasTranscript) return false
+      }
+
+      // 6. Speaker filter
+      if (noteFilters.speakerId && noteFilters.speakerId !== "all") {
+        const hasSpeaker = (n.transcriptSegments || []).some(
+          (s) => s.speaker_id === noteFilters.speakerId
+        )
+        if (!hasSpeaker) return false
+      }
+
+      // 7. Tags filter
+      if (noteFilters.selectedTags.length > 0) {
+        const noteTags = (n.tags || []).map((t) => t.toLowerCase())
+        const hasMatchingTag = noteFilters.selectedTags.some((st) =>
+          noteTags.includes(st.toLowerCase())
+        )
+        if (!hasMatchingTag) return false
+      }
+
+      return true
+    })
+  }, [localNotes, selectedFolder, searchQuery, noteFilters])
+
+  // Chat handlers
   const loadChatConversation = useCallback(async (convId: string) => {
     setChatActiveConvId(convId)
     try {
       const res = await fetch(`/api/chat/history?id=${convId}`, { credentials: "include" })
-      const data = await res.json()
-      if (data.messages?.length) {
-        const restored: Message[] = data.messages.map(
+      const chatData = await res.json()
+      if (chatData.messages?.length) {
+        const restored: Message[] = chatData.messages.map(
           (m: { role: string; content: string; citations?: Citation[] }, i: number) => ({
             id: `hist-${convId}-${i}`,
             role: m.role === "user" ? "user" : "ai",
@@ -730,17 +1431,6 @@ export function NotesApp() {
     setChatInput("")
   }
 
-  const handleDeleteConv = async (e: React.MouseEvent, convId: string) => {
-    e.stopPropagation()
-    await fetch(`/api/chat/history?id=${convId}`, { method: "DELETE", credentials: "include" }).catch(() => { })
-    const updated = chatConversations.filter((c) => c.id !== convId)
-    setChatConversations(updated)
-    if (convId === chatActiveConvId) {
-      if (updated.length > 0) loadChatConversation(updated[0].id)
-      else handleNewChat()
-    }
-  }
-
   const handleChatJump = (noteId: string) => {
     const note = localNotes.find((n) => n.id === noteId)
     if (note) {
@@ -756,14 +1446,16 @@ export function NotesApp() {
     setChatMessages((prev) => [...prev, userMsg, { id: aiMsgId, role: "ai", content: "", citations: [] }])
     setChatInput("")
     setChatLoading(true)
+
     try {
       const conversationHistory = chatMessages
         .filter((m) => m.id !== "welcome")
         .map((m) => ({
-          role: m.role === "user" ? "user" as const : "assistant" as const,
+          role: m.role === "user" ? ("user" as const) : ("assistant" as const),
           content: m.content,
           ...(m.citations?.length ? { citations: m.citations } : {}),
         }))
+
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -786,32 +1478,23 @@ export function NotesApp() {
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue
           try {
-            const data = JSON.parse(line.slice(6))
-            if (data.delta) {
+            const parsed = JSON.parse(line.slice(6))
+            if (parsed.delta) {
               setChatMessages((prev) =>
-                prev.map((m) => m.id === aiMsgId ? { ...m, content: m.content + data.delta } : m)
+                prev.map((m) => (m.id === aiMsgId ? { ...m, content: m.content + parsed.delta } : m))
               )
             }
-            if (data.done) {
+            if (parsed.done) {
               setChatMessages((prev) =>
-                prev.map((m) => m.id === aiMsgId ? { ...m, citations: data.citations ?? [] } : m)
+                prev.map((m) => (m.id === aiMsgId ? { ...m, citations: parsed.citations ?? [] } : m))
               )
-              setChatConversations((prev) => {
-                const existing = prev.find((c) => c.id === chatActiveConvId)
-                const title = existing?.title ?? userMsg.content.slice(0, 60)
-                return [
-                  { id: chatActiveConvId, title, updatedAt: new Date().toISOString() },
-                  ...prev.filter((c) => c.id !== chatActiveConvId),
-                ]
-              })
             }
-            if (data.error) throw new Error("Stream error")
-          } catch {/* skip malformed lines */ }
+          } catch { }
         }
       }
     } catch {
       setChatMessages((prev) =>
-        prev.map((m) => m.id === aiMsgId ? { ...m, content: "Something went wrong. Please try again." } : m)
+        prev.map((m) => (m.id === aiMsgId ? { ...m, content: "Something went wrong. Please try again." } : m))
       )
     } finally {
       setChatLoading(false)
@@ -828,793 +1511,1283 @@ export function NotesApp() {
     removePinData()
     setHasPin(false)
     setUser(null)
-    setLocalNotes([])
-    setSelectedNote(null)
   }
 
-  // PIN handlers
-  const handlePinSet = (pin: string) => {
-    if (user?.encryptionKey) {
-      storePinData(pin, user.encryptionKey, user.email)
-      setHasPin(true)
-    }
-  }
+  // ─── RENDER ─────────────────────────────────────────────────────────────────
 
-  const handlePinRemove = () => {
-    removePinData()
-    setHasPin(false)
-  }
-
-  const handlePinLoginSuccess = (encryptionKey: string) => {
-    if (user) {
-      setUser({ ...user, encryptionKey })
-      setPinLoginOpen(false)
-    }
-  }
-
-  // ── Shared UI fragments ─────���─────────────────────────────────────────────
-
-  const avatarButton = (
-    <div className="absolute bottom-5 left-5 z-20">
-      <AvatarButton
-        user={user?.encryptionKey ? user : null}
-        onClick={() => setAuthOpen(true)}
-        onSignOut={handleSignOut}
-      />
-    </div>
-  )
-
-  // ── Not logged in view ─────────────────────────────────────────────────────
-  if (!user?.encryptionKey) {
-    return (
-      <div className="relative flex h-screen w-full items-center justify-center bg-black text-white">
-        <div className="text-center max-w-sm px-6">
-          <div
-            className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl"
-            style={{ background: "rgba(234,179,8,0.15)", border: "1px solid rgba(234,179,8,0.25)" }}
-          >
-            <Lock className="h-8 w-8 text-yellow-500" />
-          </div>
-          <h1 className="text-2xl font-semibold text-white mb-2">Welcome to Notes</h1>
-          <p className="text-gray-400 mb-6 text-sm leading-relaxed">
-            Your notes are encrypted end-to-end. Sign in to access your secure notes across all devices.
-          </p>
-          <button
-            onClick={() => setAuthOpen(true)}
-            className="w-full rounded-xl py-3 text-sm font-semibold transition-all active:scale-[0.98]"
-            style={{
-              background: "linear-gradient(135deg, rgb(234,179,8) 0%, rgb(202,138,4) 100%)",
-              color: "rgb(0,0,0)",
-              boxShadow: "0 4px 16px rgba(234,179,8,0.3)",
-            }}
-          >
-            Sign In
-          </button>
-          <p className="mt-4 text-xs text-gray-500">
-            {authChecked ? "Create an account or sign in to get started" : "Checking session..."}
-          </p>
-        </div>
-        <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
-        <PinLoginModal
-          isOpen={pinLoginOpen}
-          onClose={() => setPinLoginOpen(false)}
-          onSuccess={handlePinLoginSuccess}
-          onSwitchToPassword={() => {
-            setPinLoginOpen(false)
-            setAuthOpen(true)
-          }}
-          userName={user?.name || ""}
-        />
-      </div>
-    )
-  }
-
-  // ── Mobile view ───────────────────────────────────────────────────────────
-  if (isMobile) {
-    return (
-      <div className="relative h-screen w-full bg-black text-white">
-        {/* Note editor — full screen when a note is selected */}
-        {selectedNote && activeTab === "notes" ? (
-          <div className="flex h-full flex-col">
-            <div className="border-b border-gray-800 p-4">
-              <div className="flex items-center justify-between mb-2">
-                <button
-                  onClick={() => setSelectedNote(null)}
-                  className="flex items-center text-sm text-yellow-500"
-                  aria-label="Back to notes list"
-                >
-                  <ChevronLeft className="mr-1 h-4 w-4" />
-                  Notes
-                </button>
-                <div className="flex items-center gap-1">
-                  <VoiceRecorder
-                              lang={transcriptionLang}
-                    silenceTimeoutSec={silenceTimeoutSec}
-                    onTranscriptUpdate={handleTranscriptUpdate}
-                    onRecordingStart={handleRecordingStart}
-                    onRecordingStop={handleRecordingStop}
-                  />
-                  <button
-                    onClick={() => setShareModalOpen(true)}
-                    className="p-2 rounded-lg text-gray-400 hover:text-yellow-500 hover:bg-zinc-800 transition-colors"
-                    aria-label="Share note"
-                  >
-                    <Share2 className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={handleDeleteNote}
-                    className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-zinc-800 transition-colors"
-                    aria-label="Delete note"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => setNotePreview((v) => !v)}
-                    className={`p-2 rounded-lg transition-colors ${notePreview ? 'text-yellow-500 bg-zinc-800' : 'text-gray-400'}`}
-                    aria-label="Toggle preview"
-                  >
-                    {notePreview ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </div>
-              <input
-                type="text"
-                className="w-full bg-transparent text-xl font-semibold text-yellow-500 focus:outline-none"
-                value={selectedNote.title}
-                onChange={(e) => handleTitleChange(e.target.value)}
-              />
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-gray-400">{formatDate(selectedNote.date)}</p>
-                <p className={`text-xs ${selectedNote.content.length > MAX_CONTENT_LENGTH * 0.9 ? 'text-red-400' : 'text-gray-500'}`}>
-                  {selectedNote.content.length.toLocaleString()} / {MAX_CONTENT_LENGTH.toLocaleString()}
-                </p>
-              </div>
+  return (
+    <div className="relative flex h-screen w-full bg-white text-zinc-900 dark:bg-black dark:text-white transition-colors duration-150 overflow-hidden font-sans select-none">
+      {/* ── COLUMN 1: Workspace Navigation / Folders ─────────────────────── */}
+      <aside
+        aria-label="Workspace Navigation"
+        style={{ width: isSidebarCollapsed ? 56 : sidebarWidth }}
+        className="relative border-r border-zinc-200/80 dark:border-zinc-800/80 flex flex-col bg-[#fbfbfd] dark:bg-black transition-[width] duration-150 shrink-0 select-none z-30"
+      >
+        {isSidebarCollapsed ? (
+          /* Min-size: Icon Rail mode (56px) - all icons visible and functional */
+          <div className="py-3.5 px-2 flex flex-col items-center h-full">
+            {/* Collapse / Expand toggle */}
+            <div className="flex flex-col items-center mb-2">
+              <button
+                onClick={() => setIsSidebarCollapsed(false)}
+                className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                title="Expand sidebar"
+                aria-label="Expand sidebar"
+              >
+                <PanelLeft className="h-4 w-4" />
+              </button>
             </div>
-            {limitError && (
-              <div className="mx-4 mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                <p className="text-xs text-red-400">{limitError}</p>
-              </div>
-            )}
-            <div className="flex-1 overflow-y-auto p-4 flex flex-col">
-              {notePreview ? (
-                <div className="prose prose-invert prose-base max-w-none text-white text-base">
-                  <MarkdownContent content={selectedNote.content || "*Nothing to preview*"} />
-                </div>
-              ) : (
-                <textarea
-                  className="note-editor-content flex-1 w-full resize-none bg-transparent text-white text-base focus:outline-none"
-                  value={selectedNote.content}
-                  onChange={(e) => handleNoteChange(e.target.value)}
-                  onPaste={handlePaste}
-                  onDrop={handleDrop}
-                  onDragOver={(e) => e.preventDefault()}
-                  placeholder="Type something..."
-                  spellCheck
-                  autoCapitalize="sentences"
-                  autoCorrect="on"
-                  maxLength={MAX_CONTENT_LENGTH + 100}
+
+            {/* Nav items: Notes & Agent icons */}
+            <nav aria-label="Main navigation" className="flex flex-col items-center gap-1 mb-2">
+              <button
+                onClick={() => setActiveTab("notes")}
+                className={`w-9 h-9 flex items-center justify-center rounded-xl transition-all cursor-pointer ${activeTab === "notes"
+                  ? "bg-zinc-100 text-zinc-950 border border-zinc-200/80 shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                  : "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900/60"
+                  }`}
+                title="Notes"
+                aria-label="Notes"
+              >
+                <Notebook className={`h-4 w-4 ${activeTab === "notes" ? "text-amber-600 dark:text-yellow-400" : "text-zinc-500"}`} />
+              </button>
+              <button
+                onClick={() => setActiveTab("agent")}
+                className={`w-9 h-9 flex items-center justify-center rounded-xl transition-all cursor-pointer ${activeTab === "agent"
+                  ? "bg-zinc-100 text-zinc-950 border border-zinc-200/80 shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                  : "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900/60"
+                  }`}
+                title="Agent"
+                aria-label="Agent"
+              >
+                <Sparkles className={`h-4 w-4 ${activeTab === "agent" ? "text-amber-600 dark:text-yellow-400" : "text-zinc-500"}`} />
+              </button>
+            </nav>
+
+            {/* Separator */}
+            <div className="w-6 h-px bg-zinc-200/80 dark:bg-zinc-800/80 my-1 shrink-0" />
+
+            {/* Folders icon list */}
+            <div className="flex-1 overflow-y-auto no-scrollbar w-full flex flex-col items-center gap-1 py-1">
+              {/* Root All Notes */}
+              <button
+                onClick={() => {
+                  setSelectedFolder("all")
+                  setActiveTab("notes")
+                }}
+                className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors cursor-pointer border ${selectedFolder === "all" && activeTab === "notes"
+                  ? "bg-zinc-100 border-zinc-200/80 text-zinc-950 font-semibold shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                  : "border-transparent text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900/50"
+                  }`}
+                title={`All Notes (${getFolderCount("all")})`}
+                aria-label="All Notes"
+              >
+                <span className="opacity-80">{renderFolderIcon("all")}</span>
+              </button>
+
+              {/* Custom Folders */}
+              {flattenedCustomFolders.map(({ folder }) => {
+                const count = getFolderCount(folder.id)
+                const isSelected = selectedFolder.toLowerCase() === folder.id.toLowerCase() && activeTab === "notes"
+
+                return (
+                  <button
+                    key={folder.id}
+                    onClick={() => {
+                      setSelectedFolder(folder.id)
+                      setActiveTab("notes")
+                    }}
+                    className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors cursor-pointer border ${isSelected
+                      ? "bg-zinc-100 border-zinc-200/80 text-zinc-950 font-semibold shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                      : "border-transparent text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900/50"
+                      }`}
+                    title={`${folder.name} (${count})`}
+                    aria-label={`${folder.name} (${count} notes)`}
+                  >
+                    <span className="opacity-80">{renderFolderIcon(folder.icon, isSelected)}</span>
+                  </button>
+                )
+              })}
+
+              <button
+                onClick={() => {
+                  setIsSidebarCollapsed(false)
+                  handleStartCreateFolder()
+                }}
+                className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 dark:text-zinc-500 dark:hover:text-white dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                title="Create folder"
+                aria-label="Create folder"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+
+              <div className="w-6 h-px bg-zinc-200/80 dark:bg-zinc-800/80 my-1 shrink-0" />
+
+              {/* Archived */}
+              <button
+                onClick={() => {
+                  setSelectedFolder("archive")
+                  setActiveTab("notes")
+                }}
+                className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors cursor-pointer border ${selectedFolder === "archive" && activeTab === "notes"
+                  ? "bg-zinc-100 border-zinc-200/80 text-zinc-950 font-semibold shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                  : "border-transparent text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900/50"
+                  }`}
+                title={`Archived (${getFolderCount("archive")})`}
+                aria-label="Archived"
+              >
+                <span className="opacity-80">{renderFolderIcon("archive")}</span>
+              </button>
+
+              {/* Trash */}
+              <button
+                onClick={() => {
+                  setSelectedFolder("trash")
+                  setActiveTab("notes")
+                }}
+                className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors cursor-pointer border ${selectedFolder === "trash" && activeTab === "notes"
+                  ? "bg-zinc-100 border-zinc-200/80 text-zinc-950 font-semibold shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                  : "border-transparent text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-900/50"
+                  }`}
+                title={`Trash (${getFolderCount("trash")})`}
+                aria-label="Trash"
+              >
+                <span className="opacity-80">{renderFolderIcon("trash")}</span>
+              </button>
+            </div>
+
+            {/* Bottom Actions: Settings & Avatar */}
+            <div className="pt-2 border-t border-zinc-200/80 dark:border-zinc-800/80 flex flex-col items-center gap-2 shrink-0">
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                title="Settings"
+                aria-label="Settings"
+              >
+                <SettingsIcon className="h-4 w-4" />
+              </button>
+              <div className="flex justify-center">
+                <AvatarButton
+                  user={user?.encryptionKey ? user : null}
+                  onClick={() => setAuthOpen(true)}
+                  onSignOut={handleSignOut}
+                  onOpenSettings={() => setSettingsOpen(true)}
                 />
-              )}
-            </div>
-            {selectedNote.attachments && selectedNote.attachments.length > 0 && (
-              <div className="h-[30%] min-h-[220px] border-t border-gray-800 p-4 bg-zinc-950/50 flex flex-col">
-                <h3 className="text-sm font-medium text-white mb-3">Attachments ({selectedNote.attachments.length})</h3>
-                <div className="flex-1 overflow-x-auto flex gap-4 pb-2 items-start custom-scrollbar">
-                  {selectedNote.attachments.map((att) => (
-                    <AttachmentCard key={att.id} attachment={att} onRemove={() => removeAttachment(att.id)} />
-                  ))}
-                </div>
               </div>
-            )}
+            </div>
           </div>
         ) : (
-          <div className="flex h-full flex-col">
-            {/* Mobile header with brand + tabs */}
-            <div className="border-b border-gray-800 px-4 pt-4 pb-0">
-              <div className="mb-3">
-                <h1 className="text-lg font-medium tracking-wide text-white">notes</h1>
-              </div>
-              <div className="flex gap-0 p-4">
+          /* Expanded Full mode */
+          <div className="p-4 flex flex-col h-full min-h-0">
+            {/* macOS window traffic lights and collapse toggle */}
+            <div className="flex items-center justify-between mb-4">
+              <button
+                onClick={() => setIsSidebarCollapsed(true)}
+                className="p-1 rounded text-zinc-400 hover:text-zinc-700 dark:hover:text-white transition-colors cursor-pointer"
+                title="Collapse sidebar"
+                aria-label="Collapse sidebar"
+              >
+                <PanelLeft className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* App title */}
+            <h2 className="text-base font-bold tracking-tight text-zinc-900 dark:text-white px-2 mb-3">
+              My Notes
+            </h2>
+
+            {/* Top workspace nav items */}
+            <nav aria-label="Main navigation" className="space-y-1 mb-5">
+              <button
+                onClick={() => setActiveTab("notes")}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-all text-left ${activeTab === "notes"
+                  ? "bg-zinc-100 text-zinc-950 font-semibold shadow-xs dark:bg-zinc-800/80 dark:text-white"
+                  : "text-zinc-600 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:bg-zinc-900/60"
+                  }`}
+              >
+                <Notebook className={`h-4 w-4 ${activeTab === "notes" ? "text-amber-600 dark:text-yellow-400" : "text-zinc-500"}`} />
+                <span>Notes</span>
+              </button>
+              <button
+                onClick={() => setActiveTab("agent")}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-all text-left ${activeTab === "agent"
+                  ? "bg-zinc-100 text-zinc-950 font-semibold shadow-xs dark:bg-zinc-800/80 dark:text-white"
+                  : "text-zinc-600 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:bg-zinc-900/60"
+                  }`}
+              >
+                <Sparkles className={`h-4 w-4 ${activeTab === "agent" ? "text-amber-600 dark:text-yellow-400" : "text-zinc-500"}`} />
+                <span>Chat</span>
+              </button>
+            </nav>
+
+            {/* Folders Section */}
+            <div className="flex-1 overflow-y-auto no-scrollbar">
+              <div className="flex items-center justify-between px-2 mb-1.5">
+                <span className="text-xs font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
+                  Folders
+                </span>
                 <button
-                  onClick={() => setActiveTab("notes")}
-                  className={`flex-1 pb-2 text-sm font-semibold border-b-2 transition-colors ${activeTab === "notes" ? "border-yellow-500 text-yellow-500" : "border-transparent text-gray-500"
-                    }`}
+                  onClick={handleStartCreateFolder}
+                  className="p-1 rounded text-zinc-400 hover:text-zinc-700 dark:hover:text-white transition-colors cursor-pointer"
+                  title="New folder"
+                  aria-label="New folder"
                 >
-                  Notes
+                  <Plus className="h-3.5 w-3.5" />
                 </button>
+              </div>
+
+              {/* Folders List */}
+              <div className="space-y-0.5">
+                {/* Root: All Notes */}
                 <button
-                  onClick={() => setActiveTab("agent")}
-                  className={`flex-1 pb-2 text-sm font-semibold border-b-2 transition-colors ${activeTab === "agent" ? "border-yellow-500 text-yellow-500" : "border-transparent text-gray-500"
+                  onClick={() => {
+                    setSelectedFolder("all")
+                    setActiveTab("notes")
+                  }}
+                  onDragOver={(e) => {
+                    if (draggedFolderId) {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setDragOverFolderId("all")
+                      e.dataTransfer.dropEffect = "move"
+                    }
+                  }}
+                  onDragLeave={(e) => {
+                    e.stopPropagation()
+                    if (dragOverFolderId === "all") setDragOverFolderId(null)
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    const droppedId = e.dataTransfer.getData("text/folder-id") || draggedFolderId
+                    if (droppedId) {
+                      const updated = moveFolderToParent(droppedId, null)
+                      setFolders(updated)
+                    }
+                    setDraggedFolderId(null)
+                    setDragOverFolderId(null)
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-xl text-xs transition-all text-left border cursor-pointer ${selectedFolder === "all"
+                    ? "bg-zinc-100 border-zinc-200/80 text-zinc-950 font-semibold shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                    : "border-transparent text-zinc-600 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:bg-zinc-900/50"
+                    } ${dragOverFolderId === "all" ? "ring-2 ring-amber-500 bg-amber-500/10 dark:bg-amber-500/20" : ""}`}
+                >
+                  <div className="flex items-center gap-2.5 truncate">
+                    <span className="opacity-80">{renderFolderIcon("all")}</span>
+                    <span className="truncate">{rootFolder.name} ({getFolderCount("all")})</span>
+                  </div>
+                </button>
+
+                {/* Custom Folders Tree */}
+                {flattenedCustomFolders.map(({ folder, depth }) => {
+                  const count = getFolderCount(folder.id)
+                  const isSelected = selectedFolder.toLowerCase() === folder.id.toLowerCase()
+                  const isDragOver = dragOverFolderId === folder.id
+                  const isEditing = editingFolderId === folder.id
+
+                  if (isEditing) {
+                    return (
+                      <div
+                        key={folder.id}
+                        style={{ paddingLeft: `${12 + depth * 14}px` }}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/40 text-xs text-zinc-900 dark:text-white"
+                      >
+                        <FolderIcon className="h-4 w-4 text-amber-500 shrink-0" />
+                        <input
+                          type="text"
+                          value={editingFolderName}
+                          onChange={(e) => setEditingFolderName(e.target.value)}
+                          autoFocus
+                          onFocus={(e) => e.target.select()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleCommitRenameFolder(folder.id)
+                            if (e.key === "Escape") setEditingFolderId(null)
+                          }}
+                          onBlur={() => handleCommitRenameFolder(folder.id)}
+                          className="flex-1 bg-transparent text-xs text-zinc-900 dark:text-white focus:outline-none"
+                        />
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div
+                      key={folder.id}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/folder-id", folder.id)
+                        setDraggedFolderId(folder.id)
+                        e.dataTransfer.effectAllowed = "move"
+                      }}
+                      onDragEnd={() => {
+                        setDraggedFolderId(null)
+                        setDragOverFolderId(null)
+                      }}
+                      onDragOver={(e) => {
+                        if (draggedFolderId && draggedFolderId !== folder.id) {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setDragOverFolderId(folder.id)
+                          e.dataTransfer.dropEffect = "move"
+                        }
+                      }}
+                      onDragLeave={(e) => {
+                        e.stopPropagation()
+                        if (dragOverFolderId === folder.id) {
+                          setDragOverFolderId(null)
+                        }
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        const droppedId = e.dataTransfer.getData("text/folder-id") || draggedFolderId
+                        if (droppedId && droppedId !== folder.id) {
+                          const updated = moveFolderToParent(droppedId, folder.id)
+                          setFolders(updated)
+                        }
+                        setDraggedFolderId(null)
+                        setDragOverFolderId(null)
+                      }}
+                      style={{ paddingLeft: `${12 + depth * 14}px` }}
+                      className={`group relative flex items-center justify-between px-3 py-1.5 rounded-xl text-xs transition-colors cursor-pointer border ${isSelected
+                        ? "bg-zinc-100 border-zinc-200/80 text-zinc-950 font-semibold shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                        : "border-transparent text-zinc-600 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:bg-zinc-900/50"
+                        } ${isDragOver ? "ring-2 ring-amber-500 bg-amber-500/10 dark:bg-amber-500/20" : ""}`}
+                      onClick={() => {
+                        setSelectedFolder(folder.id)
+                        setActiveTab("notes")
+                        setCollapsedFolderIds((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(folder.id)) {
+                            next.delete(folder.id)
+                          } else {
+                            next.add(folder.id)
+                          }
+                          return next
+                        })
+                      }}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation()
+                        setEditingFolderId(folder.id)
+                        setEditingFolderName(folder.name)
+                      }}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setFolderActionMenuId((prev) => (prev === folder.id ? null : folder.id))
+                      }}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        {depth > 0 && (
+                          <CornerDownRight className="h-3 w-3 text-zinc-400 dark:text-zinc-500 shrink-0" />
+                        )}
+                        <span className="opacity-70">
+                          {renderFolderIcon(folder.icon, isSelected || !collapsedFolderIds.has(folder.id))}
+                        </span>
+                        <span className="truncate">{folder.name}</span>
+                        {renderCollaboratorAvatars(folder.sharedWith)}
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0 ml-2">
+                        {/* 3-dot More button on hover or when open */}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setFolderActionMenuId((prev) => (prev === folder.id ? null : folder.id))
+                            }}
+                            className={`p-1 rounded-md text-zinc-400 hover:text-zinc-700 dark:hover:text-white hover:bg-zinc-200/60 dark:hover:bg-zinc-700/60 transition-opacity cursor-pointer ${folderActionMenuId === folder.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                              }`}
+                            title="Folder options"
+                          >
+                            <MoreHorizontal className="h-3.5 w-3.5" />
+                          </button>
+
+                          {/* 3-dot dropdown menu */}
+                          {folderActionMenuId === folder.id && (
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              className="absolute right-0 top-6 z-50 w-36 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xl py-1 text-xs"
+                            >
+                              <button
+                                onClick={() => {
+                                  setEditingFolderId(folder.id)
+                                  setEditingFolderName(folder.name)
+                                  setFolderActionMenuId(null)
+                                }}
+                                className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 flex items-center gap-2 cursor-pointer"
+                              >
+                                <Edit3 className="h-3.5 w-3.5 text-zinc-400" />
+                                <span>Rename</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setMovingFolder(folder)
+                                  setFolderActionMenuId(null)
+                                }}
+                                className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 flex items-center gap-2 cursor-pointer"
+                              >
+                                <FolderInput className="h-3.5 w-3.5 text-zinc-400" />
+                                <span>Move...</span>
+                              </button>
+                              <button
+                                onClick={() => handleOpenShareFolder(folder)}
+                                className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 flex items-center gap-2 cursor-pointer"
+                              >
+                                <Share2 className="h-3.5 w-3.5 text-zinc-400" />
+                                <span>Share</span>
+                              </button>
+                              <button
+                                onClick={() => handleArchiveFolderToggle(folder)}
+                                className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 flex items-center gap-2 cursor-pointer"
+                              >
+                                <Archive className="h-3.5 w-3.5 text-zinc-400" />
+                                <span>{folder.isArchived ? "Unarchive" : "Archive"}</span>
+                              </button>
+                              <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+                              <button
+                                onClick={() => handleDeleteFolderWithPrompt(folder)}
+                                className="w-full text-left px-3 py-1.5 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 flex items-center gap-2 cursor-pointer"
+                              >
+                                <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                                <span>Delete</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* Temporary New Folder in editing mode at bottom of custom folders */}
+                {isCreatingFolder && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/40 text-xs text-zinc-900 dark:text-white">
+                    <FolderIcon className="h-4 w-4 text-amber-500 shrink-0" />
+                    <input
+                      type="text"
+                      value={inlineFolderName}
+                      onChange={(e) => setInlineFolderName(e.target.value)}
+                      autoFocus
+                      onFocus={(e) => e.target.select()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleCommitCreateFolder()
+                        if (e.key === "Escape") setIsCreatingFolder(false)
+                      }}
+                      onBlur={handleCommitCreateFolder}
+                      className="flex-1 bg-transparent text-xs text-zinc-900 dark:text-white focus:outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Divider line above Archived and Trash */}
+              <hr className="mt-4 mb-4 my-2.5 border-zinc-200/80 dark:border-zinc-800" />
+
+              {/* Pinned Bottom: Archived and Trash */}
+              <div className="space-y-0.5">
+                {/* Archived */}
+                <button
+                  onClick={() => {
+                    setSelectedFolder("archive")
+                    setActiveTab("notes")
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-xl text-xs transition-colors text-left border cursor-pointer ${selectedFolder === "archive"
+                    ? "bg-zinc-100 border-zinc-200/80 text-zinc-950 font-semibold shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                    : "border-transparent text-zinc-600 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:bg-zinc-900/50"
                     }`}
                 >
-                  Agent
+                  <div className="flex items-center gap-2.5 truncate">
+                    <span className="opacity-70">{renderFolderIcon("archive")}</span>
+                    <span className="truncate">{archivedFolder.name}</span>
+                  </div>
+                </button>
+
+                {/* Trash */}
+                <button
+                  onClick={() => {
+                    setSelectedFolder("trash")
+                    setActiveTab("notes")
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-xl text-xs transition-colors text-left border cursor-pointer ${selectedFolder === "trash"
+                    ? "bg-zinc-100 border-zinc-200/80 text-zinc-950 font-semibold shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                    : "border-transparent text-zinc-600 hover:bg-zinc-100/80 dark:text-zinc-400 dark:hover:bg-zinc-900/50"
+                    }`}
+                >
+                  <div className="flex items-center gap-2.5 truncate">
+                    <span className="opacity-70">{renderFolderIcon("trash")}</span>
+                    <span className="truncate">{trashFolder.name}</span>
+                  </div>
                 </button>
               </div>
             </div>
 
-            {activeTab === "notes" ? (
-              <>
-                <div className="p-4 border-b border-gray-800">
-                  <div className="relative">
-                    <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                    <input
-                      type="text"
-                      placeholder="Search"
-                      className="w-full rounded-md bg-zinc-800 py-2 pl-8 pr-4 text-sm text-white placeholder-gray-400 focus:outline-none"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      autoComplete="off"
-                    />
-                  </div>
-                </div>
-                <div className="flex h-12 items-center justify-between border-b border-gray-800 px-4">
-                  <span className="text-sm text-gray-400">{filteredNotes.length} / {MAX_NOTES_PER_USER} Notes</span>
-                  <button
-                    onClick={handleCreateNote}
-                    className={`rounded-full p-2 ${localNotes.length >= MAX_NOTES_PER_USER ? 'text-gray-600 cursor-not-allowed' : 'text-yellow-500'}`}
-                    aria-label="New note"
-                    disabled={localNotes.length >= MAX_NOTES_PER_USER}
-                  >
-                    <Plus className="h-5 w-5" />
-                  </button>
-                </div>
-                {limitError && (
-                  <div className="mx-4 mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                    <p className="text-xs text-red-400">{limitError}</p>
-                  </div>
-                )}
-                <div className="flex-1 overflow-y-auto momentum-scroll pb-20">
-                  {isLoading ? <NotesSkeleton /> : (
-                    <NotesList notes={filteredNotes} selectedId={null} onSelect={handleNoteSelect} formatDate={formatDate} />
-                  )}
-                </div>
-              </>
-            ) : (
-              /* Mobile agent view */
-              <div className="flex flex-col flex-1 overflow-hidden">
-  <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 momentum-scroll">
-  {chatMessages.map((msg) => (
-                    <div key={msg.id} className={`flex items-start gap-2 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
-                      <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${msg.role === "user" ? "bg-zinc-800" : "bg-yellow-500 text-black"}`}>
-                        {msg.role === "user" ? <User className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
-                      </div>
-                      <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${msg.role === "user" ? "bg-zinc-800 text-white rounded-tr-sm" : "bg-zinc-900 border border-zinc-800 text-gray-200 rounded-tl-sm"
-                        }`}>
-                        {msg.role === "ai" && msg.citations?.length
-                          ? renderWithCitations(msg.content, msg.citations, handleChatJump)
-                          : <MarkdownContent content={msg.content} />
-                        }
-                      </div>
-                    </div>
-                  ))}
-                  {chatLoading && (
-                    <div className="flex items-start gap-2">
-                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-yellow-500 text-black">
-                        <Bot className="h-3 w-3" />
-                      </div>
-                      <div className="rounded-2xl rounded-tl-sm px-3 py-2 bg-zinc-900 border border-zinc-800">
-                        <Loader2 className="h-4 w-4 animate-spin text-yellow-500" />
-                      </div>
-                    </div>
-                  )}
-                                </div>
-                <div className="px-4 py-3 border-t border-zinc-800 bg-zinc-900/30 pb-24">
-                  <form onSubmit={(e) => { e.preventDefault(); handleChatSend() }} className="relative flex items-center">
-                    <input
-                      type="text"
-                      placeholder="Ask about your notes..."
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      className="w-full rounded-2xl bg-zinc-800 py-3 pl-4 pr-12 text-sm text-white placeholder-gray-500 focus:outline-none"
-                      disabled={chatLoading}
-                    />
-                    <button
-                      type="submit"
-                      disabled={!chatInput.trim() || chatLoading}
-                      className="absolute right-2 p-2 rounded-xl bg-yellow-500 text-black disabled:opacity-50"
-                    >
-                      <Send className="h-3.5 w-3.5" />
-                    </button>
-                  </form>
-                </div>
-              </div>
-            )}
+            {/* Settings at Bottom */}
+            <div className="pt-3 border-t border-zinc-200/80 dark:border-zinc-800/80 flex items-center justify-between">
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-xs text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-800/50 transition-colors"
+              >
+                <SettingsIcon className="h-4 w-4" />
+                <span>Settings</span>
+              </button>
+              <AvatarButton
+                user={user?.encryptionKey ? user : null}
+                onClick={() => setAuthOpen(true)}
+                onSignOut={handleSignOut}
+                onOpenSettings={() => setSettingsOpen(true)}
+              />
+            </div>
           </div>
         )}
 
-        {avatarButton}
-
-        <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
-        <ShareModal
-          isOpen={shareModalOpen}
-          onClose={() => setShareModalOpen(false)}
-          noteTitle={selectedNote?.title || ""}
-          noteContent={selectedNote?.content || ""}
+        {/* Drag resize handle on right border */}
+        <div
+          onMouseDown={handleSidebarMouseDown}
+          onDoubleClick={() => {
+            if (isSidebarCollapsed) {
+              setIsSidebarCollapsed(false)
+              setSidebarWidth(240)
+            } else {
+              setIsSidebarCollapsed(true)
+            }
+          }}
+          className="absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:w-1.5 hover:bg-zinc-400/40 dark:hover:bg-zinc-600/50 active:bg-amber-500 transition-all z-20"
+          title="Drag to resize sidebar (double-click to toggle)"
         />
-      </div>
-    )
-  }
+      </aside>
 
-  // ── Desktop view ──────────────────────────────────────────────────────────
-  return (
-    <div className="relative flex h-screen w-full bg-black text-white">
-      {/* Left panel */}
-      <div className="w-80 border-r border-gray-800 flex flex-col">
-        {/* Brand + tabs */}
-        <div className="border-b border-gray-800 px-4 pt-10 pb-0">
+      {/* ── COLUMN 2: Notes List OR Agent Conversations ─────────────────── */}
+      {activeTab === "notes" ? (
+        <section
+          aria-label="Notes List"
+          className="w-72 md:w-80 border-r border-zinc-200/80 dark:border-zinc-800/80 flex flex-col bg-white dark:bg-[#0c0c0e] h-full shrink-0 select-none"
+        >
+          {/* Top Search bar */}
+          <div className="p-3.5 border-b border-zinc-100 dark:border-zinc-800/80 flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400 dark:text-zinc-500" />
+              <input
+                ref={mainSearchInputRef}
+                type="text"
+                placeholder="Search notes..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-[#f8f8fa] dark:bg-zinc-900/80 border border-transparent dark:border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-900 dark:text-white placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:bg-white focus:border-amber-500/50 dark:focus:border-amber-500/50 transition-colors"
+              />
+            </div>
+            <div className="relative">
+              <button
+                ref={filterButtonRef}
+                onClick={() => setFilterModalOpen(!filterModalOpen)}
+                className={`relative p-1.5 rounded-lg transition-colors cursor-pointer ${filterModalOpen || activeFilterCount > 0
+                  ? "bg-amber-100 text-amber-800 dark:bg-yellow-500/20 dark:text-yellow-400 font-semibold"
+                  : "text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 dark:hover:text-white dark:hover:bg-zinc-800"
+                  }`}
+                title={activeFilterCount > 0 ? `${activeFilterCount} active filters (click to edit)` : "Filter notes"}
+                aria-label="Filter notes"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+                {activeFilterCount > 0 && !filterModalOpen && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-500 text-black dark:bg-yellow-500 dark:text-black text-[10px] font-bold flex items-center justify-center shadow-xs">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
 
-          <div className="flex gap-0 p-4">
-            <button
-              onClick={() => setActiveTab("notes")}
-              className={`flex-1 pb-2 text-sm font-semibold border-b-2 transition-colors ${activeTab === "notes"
-                ? "border-yellow-500 text-yellow-500"
-                : "border-transparent text-gray-500 hover:text-gray-300"
-                }`}
-            >Notes</button>
-            <button
-              onClick={() => setActiveTab("agent")}
-              className={`flex-1 pb-2 text-sm font-semibold border-b-2 transition-colors ${activeTab === "agent"
-                ? "border-yellow-500 text-yellow-500"
-                : "border-transparent text-gray-500 hover:text-gray-300"
-                }`}
-            >Agent</button>
+              <NoteFilterModal
+                isOpen={filterModalOpen}
+                onClose={() => setFilterModalOpen(false)}
+                currentCriteria={noteFilters}
+                onApply={(updated) => setNoteFilters(updated)}
+                onReset={() => setNoteFilters(EMPTY_NOTE_FILTERS)}
+                availableSpeakers={availableSpeakerOptions}
+                availableTags={filterAvailableTags}
+                tagColors={tagColors}
+                triggerRef={filterButtonRef}
+                onSaveTagColor={(tag, color) => {
+                  setTagColors((prev) => ({ ...prev, [tag.toLowerCase()]: color }))
+                }}
+              />
+            </div>
           </div>
-        </div>
 
-        {activeTab === "notes" ? (
-          <>
-            <div className="p-4 border-b border-gray-800">
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search"
-                  className="w-full rounded-md bg-zinc-800 py-2 pl-8 pr-4 text-sm text-white placeholder-gray-400 focus:outline-none"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  autoComplete="off"
-                />
+          {/* Active Filter Chips Banner */}
+          {activeFilterCount > 0 && (
+            <div className="px-3.5 py-1.5 bg-amber-500/10 dark:bg-yellow-500/10 border-b border-amber-500/20 flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-1.5 overflow-hidden text-[11px] text-amber-900 dark:text-yellow-400 truncate">
+                <SlidersHorizontal className="h-3 w-3 shrink-0" />
+                <span className="truncate font-medium">
+                  {noteFilters.titleQuery && `Title: "${noteFilters.titleQuery}" `}
+                  {noteFilters.datePreset && noteFilters.datePreset !== "all" && `${noteFilters.datePreset.replace('_', ' ')} `}
+                  {(noteFilters.dateFrom || noteFilters.dateTo) && (!noteFilters.datePreset || noteFilters.datePreset === "custom") &&
+                    `Date: ${noteFilters.dateFrom || "..."} → ${noteFilters.dateTo || "..."} `}
+                  {noteFilters.content && noteFilters.content !== "all" && `${noteFilters.content.replace('_', ' ')} `}
+                  {noteFilters.speakerId !== "all" &&
+                    `Speaker: ${resolveSpeakerName(noteFilters.speakerId, speakerProfiles)} `}
+                  {noteFilters.selectedTags.length > 0 &&
+                    `Tags: ${noteFilters.selectedTags.join(", ")}`}
+                </span>
               </div>
-            </div>
-            <div className="flex h-12 items-center justify-between border-b border-gray-800 px-4">
-              <span className="text-sm text-gray-400">
-                {filteredNotes.length} / {MAX_NOTES_PER_USER} Notes
-              </span>
               <button
-                onClick={handleCreateNote}
-                className={`rounded-full p-2 transition-colors ${localNotes.length >= MAX_NOTES_PER_USER ? 'text-gray-600 cursor-not-allowed' : 'text-yellow-500 hover:bg-zinc-800'}`}
-                aria-label="New note"
-                disabled={localNotes.length >= MAX_NOTES_PER_USER}
+                onClick={() => setNoteFilters(EMPTY_NOTE_FILTERS)}
+                className="text-[10px] text-amber-800 hover:text-amber-950 dark:text-yellow-400 dark:hover:text-yellow-300 font-semibold underline shrink-0 cursor-pointer"
               >
-                <Plus className="h-5 w-5" />
+                Clear
               </button>
             </div>
-            {limitError && !selectedNote && (
-              <div className="mx-4 mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                <p className="text-xs text-red-400">{limitError}</p>
-              </div>
+          )}
+
+          {/* Section Heading & Note Count */}
+          <div className="px-4 py-2 flex items-center justify-between text-[11px] font-semibold text-zinc-400 dark:text-zinc-500">
+            {selectedFolder === "trash" ? (
+              <>
+                <span className="text-red-500 flex items-center gap-1 font-bold">
+                  <Trash2 className="h-3 w-3" /> TRASH ({filteredNotes.length})
+                </span>
+                {filteredNotes.length > 0 && (
+                  <button
+                    onClick={handleEmptyTrash}
+                    className="text-[11px] text-red-600 dark:text-red-400 hover:underline font-semibold cursor-pointer"
+                  >
+                    Empty Trash
+                  </button>
+                )}
+              </>
+            ) : (
+              <>
+                <span>TODAY</span>
+                <button
+                  onClick={handleCreateNote}
+                  className="text-amber-600 dark:text-yellow-400 hover:opacity-80 flex items-center gap-1 font-normal cursor-pointer"
+                  title="New note"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </>
             )}
-            <div className="flex-1 overflow-y-auto momentum-scroll pb-20">
-              {isLoading ? <NotesSkeleton /> : (
-                <NotesList notes={filteredNotes} selectedId={selectedNote?.id ?? null} onSelect={handleNoteSelect} formatDate={formatDate} />
-              )}
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">History</span>
-              <button
-                onClick={handleNewChat}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 text-xs font-medium transition-colors"
-              >
-                <Plus className="h-3 w-3" />
-                New
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto py-2">
-              {chatConversations.length === 0 ? (
-                <p className="px-4 py-6 text-xs text-gray-600 text-center">No conversations yet</p>
-              ) : (
-                chatConversations.map((conv) => (
+          </div>
+
+          {/* Notes items list */}
+          <div className="flex-1 overflow-y-auto px-2 space-y-1 momentum-scroll pb-16">
+            {filteredNotes.length === 0 ? (
+              <div className="py-12 text-center text-xs text-zinc-400">No notes found</div>
+            ) : (
+              filteredNotes.map((note) => {
+                const isSelected = selectedNote?.id === note.id
+
+                return (
+                  <div
+                    key={note.id}
+                    onClick={() => setSelectedNote(note)}
+                    className={`relative p-3.5 rounded-xl transition-all cursor-pointer text-left border-none ${isSelected
+                      ? "bg-zinc-100 border-zinc-200/80 text-zinc-950 shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                      : "border-transparent hover:bg-zinc-100/70 text-zinc-850 dark:text-zinc-200 dark:hover:bg-zinc-900/60"
+                      }`}
+                  >
+                    <h3
+                      className={`text-sm truncate leading-snug ${isSelected
+                        ? "font-bold text-zinc-950 dark:text-white"
+                        : "font-semibold text-zinc-800 dark:text-zinc-200"
+                        }`}
+                    >
+                      <HighlightText text={getNoteDisplayTitle(note) || "Note"} query={searchQuery} />
+                    </h3>
+
+                    <p
+                      className={`text-xs mt-1 line-clamp-2 ${isSelected
+                        ? "text-zinc-600 dark:text-zinc-400 font-medium"
+                        : "text-zinc-400 dark:text-zinc-500"
+                        }`}
+                    >
+                      <span className="font-medium mr-2">{formatDateStandard(note.date)}</span>
+                      {(() => {
+                        const displayTitle = getNoteDisplayTitle(note)
+                        let snippet = "No content"
+                        if (note.content) {
+                          const trimmed = note.content.trim()
+                          if (displayTitle && trimmed.startsWith(displayTitle)) {
+                            snippet = trimmed.slice(displayTitle.length).trim() || ""
+                          } else {
+                            snippet = trimmed.slice(0, 90)
+                          }
+                        }
+                        return <HighlightText text={snippet} query={searchQuery} />
+                      })()}
+                    </p>
+
+                    {/* Collaborator Avatars (if note is shared) */}
+                    {note.sharedWith && note.sharedWith.length > 0 && (
+                      <div className="mt-2 flex justify-end" title={`Shared with ${note.sharedWith.length} user(s)`}>
+                        {renderCollaboratorAvatars(note.sharedWith, 3)}
+                      </div>
+                    )}
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </section>
+      ) : (
+        /* Agent Conversation history in Column 2 */
+        <section
+          aria-label="Agent Conversation History"
+          className="w-72 md:w-80 border-r border-zinc-200/80 dark:border-zinc-800/80 flex flex-col bg-white dark:bg-[#0c0c0e] h-full shrink-0 select-none"
+        >
+          <div className="p-3.5 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+            <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Chat History</span>
+            <button
+              onClick={handleNewChat}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-800 dark:text-yellow-400 text-xs font-medium transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>New</span>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            {chatConversations.length === 0 ? (
+              <p className="text-center text-xs text-zinc-400 py-8">No chats yet</p>
+            ) : (
+              chatConversations.map((conv) => {
+                const isSelected = conv.id === chatActiveConvId
+                return (
                   <div
                     key={conv.id}
                     onClick={() => loadChatConversation(conv.id)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => e.key === "Enter" && loadChatConversation(conv.id)}
-                    className={`w-full flex items-start gap-2 px-3 py-2.5 text-left group transition-colors rounded-lg mx-1 cursor-pointer ${conv.id === chatActiveConvId
-                      ? "bg-yellow-500/10 text-yellow-300"
-                      : "hover:bg-zinc-800/50 text-gray-400 hover:text-gray-200"
+                    className={`relative p-2.5 rounded-xl cursor-pointer text-left flex items-start gap-2 border transition-all ${isSelected
+                      ? "bg-zinc-100 border-zinc-200/80 text-zinc-950 font-medium shadow-xs dark:bg-zinc-800/80 dark:border-zinc-700/60 dark:text-white"
+                      : "border-transparent hover:bg-zinc-100/70 text-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900/60"
                       }`}
-                    style={{ width: "calc(100% - 8px)" }}
                   >
-                    <MessageSquare className="h-3.5 w-3.5 mt-0.5 shrink-0 opacity-60" />
+                    {isSelected && (
+                      <span className="absolute left-0 top-2 bottom-2 w-1 bg-amber-500 dark:bg-yellow-500 rounded-r-full" />
+                    )}
+                    <MessageSquare className="h-3.5 w-3.5 mt-0.5 opacity-60 shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium truncate leading-tight">{conv.title}</p>
-                      <p className="text-[10px] opacity-50 mt-0.5">{formatRelativeTime(conv.updatedAt)}</p>
+                      <p className="text-xs truncate font-medium">{conv.title}</p>
+                      <p className="text-[10px] text-zinc-400 mt-0.5">{formatRelativeTime(conv.updatedAt)}</p>
                     </div>
-                    <button
-                      onClick={(e) => handleDeleteConv(e, conv.id)}
-                      className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:text-red-400 transition-all shrink-0"
-                    >
-                      <Trash className="h-3 w-3" />
-                    </button>
                   </div>
-                ))
-              )}
-            </div>
-          </>
-        )}
-      </div>
+                )
+              })
+            )}
+          </div>
+        </section>
+      )}
 
-      {/* Right panel */}
-      <div className="flex-1 overflow-hidden">
+      {/* ── COLUMN 3: Note Editor OR Agent Workspace ─────────────────────── */}
+      <main className="flex-1 flex flex-col bg-white dark:bg-black h-full min-w-0 overflow-hidden relative">
         {activeTab === "notes" ? (
           selectedNote ? (
-            <div className="flex h-full flex-col">
-              <div className="border-b border-gray-800 p-6">
-                <div className="flex items-center justify-between mb-2">
-                  <input
-                    type="text"
-                    className="flex-1 bg-transparent text-2xl font-semibold text-yellow-500 focus:outline-none"
-                    value={selectedNote.title}
-                    onChange={(e) => handleTitleChange(e.target.value)}
-                  />
-                  <div className="flex items-center gap-1 ml-4">
+            <div className="flex flex-col h-full overflow-hidden">
+              {/* Trash Warning Banner */}
+              {selectedNote.folder === "trash" && (
+                <div className="bg-amber-500/10 dark:bg-amber-500/15 border-b border-amber-500/30 px-8 py-2.5 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span className="font-medium">This note is in the Trash.</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleRestoreNote}
+                      className="px-3 py-1 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 font-medium transition-colors shadow-2xs cursor-pointer flex items-center gap-1.5"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 text-zinc-600 dark:text-zinc-300" />
+                      <span>Restore Note</span>
+                    </button>
+                    <button
+                      onClick={handlePermanentDeleteNote}
+                      className="px-3 py-1 rounded-lg bg-red-600 text-white hover:bg-red-700 font-medium transition-colors shadow-2xs cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Delete Permanently</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Note Header Top Bar */}
+              <div className="px-8 p-5 pb-4 border-b border-zinc-100 dark:border-zinc-800/80 shrink-0">
+                <div className="flex items-start justify-between gap-4">
+                  {/* Note title and metadata (Date & Tags directly under Notes title) */}
+                  <div className="flex-1 min-w-0">
+                    <input
+                      type="text"
+                      value={selectedNote.title}
+                      onChange={(e) => handleTitleChange(e.target.value)}
+                      placeholder={selectedNote.content.trim().split("\n")[0]?.trim() || "Note title..."}
+                      className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white bg-transparent focus:outline-none w-full"
+                    />
+
+                    {/* Date and Tags directly under the Notes title */}
+                    <div className="flex items-center gap-2.5 mt-2 flex-wrap">
+                      <span className="text-xs text-zinc-400 dark:text-zinc-500 font-medium shrink-0">
+                        {formatDateStandard(selectedNote.date)}
+                      </span>
+
+                      <span className="text-zinc-300 dark:text-zinc-700 text-xs shrink-0 select-none">·</span>
+
+                      {/* Reusable Tags Row with Apple color dots */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {(selectedNote.tags || []).map((t) => {
+                          const dotColor = getTagColor(t, tagColors)
+                          return (
+                            <span
+                              key={t}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#f0f0f2] dark:bg-white/10 text-zinc-800 dark:text-zinc-200 shadow-2xs"
+                            >
+                              <span
+                                className="w-2 h-2 rounded-full shrink-0 shadow-xs"
+                                style={{ backgroundColor: dotColor }}
+                              />
+                              <span className="capitalize">{t}</span>
+                              <button
+                                onClick={() => handleRemoveTagFromSelectedNote(t)}
+                                className="text-zinc-400 hover:text-zinc-700 dark:hover:text-white transition-colors ml-0.5 cursor-pointer"
+                                title="Remove tag"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          )
+                        })}
+
+                        {/* Add Tag Popover */}
+                        <div className="relative inline-flex items-center">
+                          <button
+                            ref={tagAddButtonRef}
+                            onClick={() => setTagInputOpen((v) => !v)}
+                            className="inline-flex items-center justify-center w-7 h-5 rounded-full bg-[#f0f0f2] hover:bg-zinc-200 dark:bg-white/10 dark:hover:bg-white/15 text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer"
+                            title="Add tags"
+                            aria-label="Add tags"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+
+                          <NoteTagsPopover
+                            isOpen={tagInputOpen}
+                            onClose={() => setTagInputOpen(false)}
+                            selectedTags={selectedNote.tags || []}
+                            allTags={allAvailableTags}
+                            tagColors={tagColors}
+                            onToggleTag={handleToggleTagOnSelectedNote}
+                            triggerRef={tagAddButtonRef}
+                          />
+                        </div>
+
+                        {/* Note Collaborator Avatars */}
+                        {selectedNote.sharedWith && selectedNote.sharedWith.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleOpenShareNote}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-100 hover:bg-zinc-200/80 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 border border-zinc-200/60 dark:border-zinc-700/60 shadow-2xs transition-colors cursor-pointer"
+                            title="Shared note collaborators (click to manage)"
+                          >
+                            <Users className="h-3 w-3 text-zinc-500 dark:text-zinc-400" />
+                            {renderCollaboratorAvatars(selectedNote.sharedWith, 4)}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Top-Right Minimal Actions */}
+                  <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+                    {/* 3-dot More options menu: Eye, Sharing, Move to Folder, Delete */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setMoreMenuOpen((v) => !v)}
+                        className={`p-2 rounded-xl transition-colors cursor-pointer ${moreMenuOpen
+                          ? "text-zinc-900 bg-zinc-100 dark:text-white dark:bg-zinc-800"
+                          : "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-white dark:hover:bg-zinc-800"
+                          }`}
+                        title="More actions"
+                        aria-label="More actions"
+                      >
+                        <MoreHorizontal className="h-4 w-4" />
+                      </button>
+
+                      {moreMenuOpen && (
+                        <div className="absolute right-0 top-10 z-40 w-52 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl py-1 text-xs">
+                          {/* Markdown Preview toggle */}
+                          <button
+                            onClick={() => {
+                              setNotePreview((v) => !v)
+                              setMoreMenuOpen(false)
+                            }}
+                            className="w-full text-left px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 flex items-center gap-2.5 transition-colors cursor-pointer"
+                          >
+                            {notePreview ? <EyeOff className="h-4 w-4 text-zinc-500" /> : <Eye className="h-4 w-4 text-zinc-500" />}
+                            <span>{notePreview ? "Edit text" : "Preview markdown"}</span>
+                          </button>
+
+                          {/* Share button (only active for non-trash notes) */}
+                          {selectedNote.folder !== "trash" && (
+                            <button
+                              onClick={handleOpenShareNote}
+                              className="w-full text-left px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 flex items-center gap-2.5 transition-colors cursor-pointer"
+                            >
+                              <Share2 className="h-4 w-4 text-zinc-500" />
+                              <span>Share note...</span>
+                            </button>
+                          )}
+
+                          <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+
+                          {selectedNote.folder !== "trash" ? (
+                            <>
+                              {/* Move to folder submenu */}
+                              <div className="px-3 py-1 font-semibold text-[10px] text-zinc-400 uppercase tracking-wider">
+                                Move to Folder
+                              </div>
+                              <button
+                                onClick={() => {
+                                  handleMoveToFolder("all")
+                                  setMoreMenuOpen(false)
+                                }}
+                                className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 flex items-center justify-between transition-colors cursor-pointer"
+                              >
+                                <span>All Notes</span>
+                                {selectedNote.folder === "all" && (
+                                  <span className="text-amber-600 dark:text-yellow-400 text-xs font-bold">✓</span>
+                                )}
+                              </button>
+                              {allCustomFolders.map(({ folder, depth }) => (
+                                <button
+                                  key={folder.id}
+                                  onClick={() => {
+                                    handleMoveToFolder(folder.id)
+                                    setMoreMenuOpen(false)
+                                  }}
+                                  style={{ paddingLeft: `${12 + depth * 8}px` }}
+                                  className="w-full text-left px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 flex items-center justify-between transition-colors cursor-pointer"
+                                >
+                                  <span className="truncate">{folder.name}</span>
+                                  {selectedNote.folder === folder.id && (
+                                    <span className="text-amber-600 dark:text-yellow-400 text-xs font-bold">✓</span>
+                                  )}
+                                </button>
+                              ))}
+
+                              <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+
+                              {/* Delete button (moves to trash) */}
+                              <button
+                                onClick={() => {
+                                  handleDeleteNote()
+                                  setMoreMenuOpen(false)
+                                }}
+                                className="w-full text-left px-3 py-2 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 flex items-center gap-2.5 transition-colors cursor-pointer font-medium"
+                              >
+                                <Trash2 className="h-4 w-4 text-red-500" />
+                                <span>Move to Trash</span>
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {/* Restore note */}
+                              <button
+                                onClick={() => {
+                                  handleRestoreNote()
+                                  setMoreMenuOpen(false)
+                                }}
+                                className="w-full text-left px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 flex items-center gap-2.5 transition-colors cursor-pointer font-medium"
+                              >
+                                <RotateCcw className="h-4 w-4 text-zinc-500" />
+                                <span>Restore note</span>
+                              </button>
+                              <div className="my-1 border-t border-zinc-100 dark:border-zinc-800" />
+                              {/* Delete permanently */}
+                              <button
+                                onClick={() => {
+                                  handlePermanentDeleteNote()
+                                  setMoreMenuOpen(false)
+                                }}
+                                className="w-full text-left px-3 py-2 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 flex items-center gap-2.5 transition-colors cursor-pointer font-medium"
+                              >
+                                <Trash2 className="h-4 w-4 text-red-500" />
+                                <span>Delete permanently</span>
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+
+              {/* Note Content Editor: Plain Text First */}
+              <div className="flex-1 overflow-y-auto px-8 py-4 flex flex-col momentum-scroll relative">
+                {notePreview ? (
+                  <div className="prose max-w-none text-base text-zinc-900 dark:prose-invert dark:text-white leading-relaxed pb-20">
+                    <MarkdownContent content={selectedNote.content || "*Nothing to preview*"} />
+                  </div>
+                ) : (
+                  <div className="relative flex-1 flex flex-col min-h-[300px]">
+                    {/* Live Highlight Backdrop for Search Query (#ffdda0) */}
+                    {searchQuery.trim() && (
+                      <div
+                        aria-hidden="true"
+                        className="absolute inset-0 pointer-events-none whitespace-pre-wrap break-words font-sans text-base leading-relaxed text-transparent overflow-hidden select-none pb-20 z-0"
+                        style={{ wordBreak: "break-word" }}
+                      >
+                        <HighlightText text={selectedNote.content || ""} query={searchQuery} />
+                      </div>
+                    )}
+                    <textarea
+                      ref={editorTextareaRef}
+                      className="note-editor-content relative z-10 flex-1 w-full resize-none bg-transparent text-zinc-900 dark:text-white text-base leading-relaxed focus:outline-none placeholder-zinc-400 dark:placeholder-zinc-600 font-sans pb-20"
+                      value={selectedNote.content}
+                      onChange={(e) => handleNoteChange(e.target.value)}
+                      placeholder={selectedNote.folder === "trash" ? "This note is in Trash." : "Type something..."}
+                      spellCheck
+                      autoCapitalize="sentences"
+                      autoCorrect="on"
+                      maxLength={MAX_CONTENT_LENGTH + 100}
+                      readOnly={selectedNote.folder === "trash"}
+                    />
+                  </div>
+                )}
+
+                {/* Floating Action Container at bottom-right of note content (only when not in Trash) */}
+                {selectedNote.folder !== "trash" && (
+                  <div className="sticky bottom-6 self-end z-20 pointer-events-auto flex items-center gap-2">
+                    {/* Transcription icon with badge of number of records (left to Record item) */}
+                    <button
+                      type="button"
+                      onClick={() => setTranscriptionSidebarOpen((v) => !v)}
+                      className={`relative w-10 h-10 rounded-full transition-all cursor-pointer shadow-md backdrop-blur-md border flex items-center justify-center ${transcriptionSidebarOpen
+                        ? "bg-amber-500 text-black border-amber-400 dark:bg-yellow-500 dark:text-black"
+                        : "bg-white/95 dark:bg-zinc-800/95 text-zinc-600 dark:text-zinc-300 border-zinc-200/80 dark:border-zinc-700 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-700"
+                        }`}
+                      title={
+                        noteRecordCount > 0
+                          ? `Show transcription (${noteRecordCount} ${noteRecordCount === 1 ? "record" : "records"})`
+                          : "Show transcription"
+                      }
+                      aria-label="Show transcription"
+                    >
+                      <AudioWaveform className="h-4 w-4" />
+                      {noteRecordCount > 0 && (
+                        <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-amber-500 text-black dark:bg-yellow-500 dark:text-black text-[10px] font-bold flex items-center justify-center shadow-xs border border-white dark:border-zinc-900">
+                          {noteRecordCount}
+                        </span>
+                      )}
+                    </button>
+
                     <VoiceRecorder
-                                  lang={transcriptionLang}
+                      lang={transcriptionLang}
                       silenceTimeoutSec={silenceTimeoutSec}
+                      speakerProfiles={speakerProfiles}
                       onTranscriptUpdate={handleTranscriptUpdate}
                       onRecordingStart={handleRecordingStart}
                       onRecordingStop={handleRecordingStop}
                     />
-                    <button
-                      onClick={() => setNotePreview((v) => !v)}
-                      className={`p-2 rounded-lg transition-colors ${notePreview ? 'text-yellow-500 bg-zinc-800' : 'text-gray-400 hover:text-yellow-500 hover:bg-zinc-800'}`}
-                      aria-label="Toggle preview"
-                      title={notePreview ? "Edit" : "Preview markdown"}
-                    >
-                      {notePreview ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                    </button>
-                    <button
-                      onClick={() => setShareModalOpen(true)}
-                      className="p-2 rounded-lg text-gray-400 hover:text-yellow-500 hover:bg-zinc-800 transition-colors"
-                      aria-label="Share note"
-                    >
-                      <Share2 className="h-5 w-5" />
-                    </button>
-                    <button
-                      onClick={handleDeleteNote}
-                      className="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-zinc-800 transition-colors"
-                      aria-label="Delete note"
-                    >
-                      <Trash2 className="h-5 w-5" />
-                    </button>
                   </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-gray-400">{formatDate(selectedNote.date)}</p>
-                  <p className={`text-xs ${selectedNote.content.length > MAX_CONTENT_LENGTH * 0.9 ? 'text-red-400' : 'text-gray-500'}`}>
-                    {selectedNote.content.length.toLocaleString()} / {MAX_CONTENT_LENGTH.toLocaleString()} characters
-                  </p>
-                </div>
-              </div>
-              {limitError && (
-                <div className="mx-6 mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                  <p className="text-sm text-red-400">{limitError}</p>
-                </div>
-              )}
-              <div className="flex-1 overflow-y-auto p-6 flex flex-col">
-                {notePreview ? (
-                  <div className="prose prose-invert max-w-none text-lg text-white">
-                    <MarkdownContent content={selectedNote.content || "*Nothing to preview*"} />
-                  </div>
-                ) : (
-                  <textarea
-                    className="note-editor-content flex-1 w-full resize-none bg-transparent text-lg text-white focus:outline-none"
-                    value={selectedNote.content}
-                    onChange={(e) => handleNoteChange(e.target.value)}
-                    onPaste={handlePaste}
-                    onDrop={handleDrop}
-                    onDragOver={(e) => e.preventDefault()}
-                    placeholder="Type something..."
-                    spellCheck
-                    autoCapitalize="sentences"
-                    autoCorrect="on"
-                    maxLength={MAX_CONTENT_LENGTH + 100}
-                  />
                 )}
               </div>
-              {selectedNote.attachments && selectedNote.attachments.length > 0 && (
-                <div className="h-[30%] min-h-[240px] border-t border-gray-800 p-6 bg-zinc-950/50 flex flex-col">
-                  <h3 className="text-sm font-medium text-white mb-4">Attachments ({selectedNote.attachments.length})</h3>
-                  <div className="flex-1 overflow-x-auto flex gap-4 pb-2 items-start custom-scrollbar">
-                    {selectedNote.attachments.map((att) => (
-                      <AttachmentCard key={att.id} attachment={att} onRemove={() => removeAttachment(att.id)} />
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           ) : (
-            <div className="flex h-full items-center justify-center text-gray-500">
+            <div className="flex h-full items-center justify-center text-zinc-400">
               <div className="text-center">
-                <p className="mb-4 text-sm">Select a note or create a new one</p>
+                <p className="text-sm text-zinc-500 mb-3">No note selected</p>
                 <button
                   onClick={handleCreateNote}
-                  className="rounded-md bg-yellow-500 px-4 py-2 text-sm text-black hover:bg-yellow-600 transition-colors"
+                  className="px-4 py-2 rounded-xl bg-zinc-900 text-white dark:bg-yellow-500 dark:text-black text-xs font-semibold"
                 >
-                  Create New Note
+                  Create Note
                 </button>
               </div>
             </div>
           )
         ) : (
-          /* Agent chat panel */
-          <div className="flex flex-col h-full">
-            {/* Chat header */}
-            <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-800 bg-zinc-900/50">
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-yellow-500/10 border border-yellow-500/20">
-                <Brain className="h-4 w-4 text-yellow-500" />
-              </div>
-              <div>
-                <h2 className="text-sm font-semibold text-white tracking-tight">AI Assistant</h2>
-                <p className="text-[10px] text-gray-500">Query your secure knowledge base</p>
-              </div>
+          /* Agent AI Workspace */
+          <div className="flex flex-col h-full bg-[#fcfcfd] dark:bg-black">
+            <div className="px-6 py-3.5 border-b border-zinc-100 dark:border-zinc-800 flex items-center gap-2.5">
+              <Sparkles className="h-4 w-4 text-amber-600 dark:text-yellow-400" />
+              <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">AI Assistant</h2>
             </div>
 
-            {/* Messages */}
-  <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-6 space-y-5 momentum-scroll">
-  {chatMessages.map((msg) => (
+            <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-6 space-y-4 momentum-scroll">
+              {chatMessages.map((msg) => (
                 <div key={msg.id} className={`flex items-start gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
-                  <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${msg.role === "user" ? "bg-zinc-800 text-white" : "bg-yellow-500 text-black"}`}>
+                  <div
+                    className={`w-7 h-7 rounded-full flex items-center justify-center text-xs shrink-0 ${msg.role === "user"
+                      ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200"
+                      : "bg-amber-500 text-black dark:bg-yellow-500 dark:text-black"
+                      }`}
+                  >
                     {msg.role === "user" ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
                   </div>
-                  <div className={`flex max-w-[78%] flex-col gap-2 rounded-2xl px-4 py-3 text-sm ${msg.role === "user"
-                    ? "bg-zinc-800 text-white rounded-tr-sm"
-                    : "bg-zinc-900/80 border border-zinc-800/50 text-gray-200 rounded-tl-sm shadow-sm"
-                    }`}>
-                    {msg.role === "ai" && msg.citations?.length
-                      ? renderWithCitations(msg.content, msg.citations, handleChatJump)
-                      : <MarkdownContent content={msg.content} />
-                    }
-                    {msg.citations && msg.citations.length > 0 && (() => {
-                      const usedIndices = new Set([...msg.content.matchAll(/\[(\d+)\]/g)].map((m) => parseInt(m[1])))
-                      const usedCitations = msg.citations.filter((c) => usedIndices.has(c.index))
-                      if (!usedCitations.length) return null
-                      return (
-                        <div className="mt-1.5 pt-2 border-t border-zinc-700/50 flex flex-col gap-1">
-                          {usedCitations.map((c) => (
-                            <button key={c.noteId} onClick={() => handleChatJump(c.noteId)}
-                              className="flex items-center gap-2 text-xs text-gray-400 hover:text-yellow-400 transition-colors text-left group">
-                              <span className="flex items-center justify-center rounded px-1 bg-yellow-500/10 text-yellow-500 font-semibold text-[11px] shrink-0 group-hover:bg-yellow-500/20">({c.index})</span>
-                              <FileText className="h-3 w-3 shrink-0 opacity-50" />
-                              <span className="truncate">{c.title}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )
-                    })()}
+                  <div
+                    className={`max-w-[78%] rounded-2xl px-4 py-3 text-xs leading-relaxed ${msg.role === "user"
+                      ? "bg-zinc-900 text-white dark:bg-zinc-800"
+                      : "bg-white border border-zinc-200/80 dark:bg-zinc-900 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200 shadow-2xs"
+                      }`}
+                  >
+                    {msg.role === "ai" && msg.citations?.length ? (
+                      <MarkdownWithCitations content={msg.content} citations={msg.citations} onJump={handleChatJump} />
+                    ) : (
+                      <MarkdownContent content={msg.content} />
+                    )}
                   </div>
                 </div>
               ))}
-              {chatLoading && chatMessages[chatMessages.length - 1]?.content === "" && (
-                <div className="flex items-start gap-3 -mt-4">
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-yellow-500 text-black">
-                    <Bot className="h-3.5 w-3.5" />
-                  </div>
-                  <div className="flex rounded-2xl rounded-tl-sm px-4 py-3 bg-zinc-900/80 border border-zinc-800/50">
-                    <Loader2 className="h-4 w-4 animate-spin text-yellow-500" />
-                  </div>
+              {chatLoading && (
+                <div className="flex items-center gap-2 text-xs text-zinc-400">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Thinking...</span>
                 </div>
               )}
-                        </div>
+            </div>
 
-            {/* Input */}
-            <div className="px-6 py-4 border-t border-zinc-800/50 bg-zinc-900/30">
-              <form onSubmit={(e) => { e.preventDefault(); handleChatSend() }} className="relative flex items-center">
+            <div className="p-4 border-t border-zinc-100 dark:border-zinc-800">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  handleChatSend()
+                }}
+                className="relative flex items-center"
+              >
                 <input
                   type="text"
                   placeholder="Ask about your notes..."
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
-                  className="w-full rounded-2xl bg-zinc-800/50 border border-zinc-700/50 py-3.5 pl-4 pr-12 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/50 transition-all"
-                  disabled={chatLoading}
+                  className="w-full rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-transparent focus:border-amber-500/50 px-4 py-2.5 text-xs text-zinc-900 dark:text-white focus:outline-none"
                 />
                 <button
                   type="submit"
                   disabled={!chatInput.trim() || chatLoading}
-                  className="absolute right-2 p-2 rounded-xl bg-yellow-500 text-black disabled:opacity-50 disabled:cursor-not-allowed hover:bg-yellow-400 transition-colors"
+                  className="absolute right-2 p-1.5 rounded-lg bg-zinc-900 text-white dark:bg-yellow-500 dark:text-black disabled:opacity-40"
                 >
-                  <Send className="h-3.5 w-3.5" />
+                  <Send className="h-3 w-3" />
                 </button>
               </form>
-              <p className="text-center text-[10px] text-gray-600 mt-2">
-                AI can make mistakes. Consider verifying important information.
-              </p>
             </div>
           </div>
         )}
-      </div>
+      </main>
 
-      {avatarButton}
+      {/* ── COLUMN 4: Transcription Sidebar (conditional 4th column) ──── */}
+      <TranscriptionSidebar
+        isOpen={transcriptionSidebarOpen && activeTab === "notes" && !!selectedNote}
+        onClose={() => setTranscriptionSidebarOpen(false)}
+        segments={selectedNote?.transcriptSegments || []}
+        audioRecording={selectedNote?.audioRecording}
+        speakerProfiles={speakerProfiles}
+        onRenameSpeaker={handleRenameSpeaker}
+      />
 
+      {/* ── Modals ──────────────────────────────────────────────────────── */}
       <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} onSignIn={(u) => setUser(u)} />
+      <PinLoginModal
+        isOpen={pinLoginOpen}
+        onClose={() => setPinLoginOpen(false)}
+        onSuccess={(key) => {
+          if (user) setUser({ ...user, encryptionKey: key })
+          setPinLoginOpen(false)
+        }}
+        onSwitchToPassword={() => {
+          setPinLoginOpen(false)
+          setAuthOpen(true)
+        }}
+        userName={user?.name || ""}
+      />
       <ShareModal
         isOpen={shareModalOpen}
-        onClose={() => setShareModalOpen(false)}
-        noteTitle={selectedNote?.title || ""}
-        noteContent={selectedNote?.content || ""}
+        onClose={() => {
+          setShareModalOpen(false)
+          setShareTarget(null)
+        }}
+        target={shareTarget}
+        onUpdateCollaborators={handleUpdateCollaborators}
       />
-    </div>
-  )
-}
+      <SpotlightSearchModal
+        isOpen={spotlightOpen}
+        onClose={() => setSpotlightOpen(false)}
+        notes={localNotes}
+        folders={folders}
+        onSelectNote={(note) => {
+          setSelectedNote(note)
+          setActiveTab("notes")
+        }}
+      />
+      <SettingsModal
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        userEmail={user?.email}
+        speakers={speakerProfiles}
+        onUpdateSpeakers={(updated) => setSpeakerProfiles(updated)}
+      />
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function NotesList({
-  notes,
-  selectedId,
-  onSelect,
-  formatDate,
-}: {
-  notes: DecryptedNoteWithMeta[]
-  selectedId: string | null
-  onSelect: (note: DecryptedNoteWithMeta) => void
-  formatDate: (date: Date) => string
-}) {
-  if (notes.length === 0) {
-    return (
-      <li className="flex h-32 list-none items-center justify-center text-gray-500 text-sm">
-        No notes found
-      </li>
-    )
-  }
-  return (
-    <ul>
-      {notes.map((note) => (
-        <li key={note.id} className="border-b border-gray-800">
-          <button
-            className={`w-full p-4 text-left transition-colors ${selectedId === note.id ? "bg-zinc-800" : "hover:bg-zinc-900"
-              }`}
-            onClick={() => onSelect(note)}
-          >
-            <h3 className="font-medium text-white truncate">{note.title}</h3>
-            <p className="mt-1 text-sm text-gray-400 truncate">
-              {formatDate(note.date)} — {note.attachments && note.attachments.length > 0 ? `${note.attachments.length} attachment${note.attachments.length > 1 ? 's' : ''}` : (note.content.slice(0, 50) || "No content")}
-            </p>
-          </button>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-function NotesSkeleton() {
-  return (
-    <div className="p-4 space-y-4">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="animate-pulse">
-          <div className="h-4 w-3/4 rounded bg-zinc-800" />
-          <div className="mt-2 h-3 w-1/2 rounded bg-zinc-800" />
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function AttachmentCard({ attachment, onRemove }: { attachment: NoteAttachment; onRemove: () => void }) {
-  const isImage = attachment.type === "image"
-  const isAudio = attachment.type === "audio"
-  const isText = attachment.type === "text"
-
-  const [viewerOpen, setViewerOpen] = useState(false)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-
-  useEffect(() => {
-    if (isAudio && attachment.dataUrl) {
-      audioRef.current = new Audio(attachment.dataUrl)
-      audioRef.current.onended = () => setIsPlaying(false)
-    }
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause()
-      }
-    }
-  }, [isAudio, attachment.dataUrl])
-
-  const toggleAudio = () => {
-    if (!audioRef.current) return
-    if (isPlaying) {
-      audioRef.current.pause()
-      setIsPlaying(false)
-    } else {
-      audioRef.current.play()
-      setIsPlaying(true)
-    }
-  }
-
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return bytes + " B"
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB"
-  }
-
-  const getBadge = () => {
-    if (isImage) return "IMG"
-    if (isAudio) return "M4A"
-    return "TXT"
-  }
-
-  const getBadgeColor = () => {
-    if (isImage) return "bg-blue-600/90"
-    if (isAudio) return "bg-purple-600/90"
-    return "bg-cyan-700/90"
-  }
-
-  return (
-    <>
-      <div className="group relative flex-shrink-0 w-64 rounded-xl border border-white/10 bg-[#1C1C1E] overflow-hidden shadow-sm shadow-black/50 flex flex-col transition-colors hover:bg-[#2C2C2E]">
-        <div
-          className={`h-32 bg-[#151516] relative flex items-center justify-center overflow-hidden border-b border-white/5 ${isImage ? 'cursor-pointer' : ''}`}
-          onClick={() => { if (isImage) setViewerOpen(true) }}
-        >
-          <div className={`absolute top-2 left-2 px-1.5 py-0.5 rounded text-[9px] font-bold text-white tracking-wider z-10 ${getBadgeColor()}`}>
-            {getBadge()}
-          </div>
-          {isImage && attachment.dataUrl && (
-            <img src={attachment.dataUrl} alt={attachment.name} className="w-full h-full object-cover" />
-          )}
-          {isText && <FileText className="h-12 w-12 text-white" strokeWidth={1} />}
-          {isAudio && (
-            <div className="flex items-center justify-center gap-1 w-full h-full px-6 opacity-80">
-              <div className={`h-4 w-1.5 bg-purple-400 rounded-full ${isPlaying ? 'animate-pulse' : ''}`} style={{ animationDelay: "0ms" }} />
-              <div className={`h-8 w-1.5 bg-purple-400 rounded-full ${isPlaying ? 'animate-pulse' : ''}`} style={{ animationDelay: "100ms" }} />
-              <div className={`h-12 w-1.5 bg-purple-400 rounded-full ${isPlaying ? 'animate-pulse' : ''}`} style={{ animationDelay: "200ms" }} />
-              <div className={`h-16 w-1.5 bg-purple-400 rounded-full ${isPlaying ? 'animate-pulse' : ''}`} style={{ animationDelay: "300ms" }} />
-              <div className={`h-10 w-1.5 bg-purple-400 rounded-full ${isPlaying ? 'animate-pulse' : ''}`} style={{ animationDelay: "400ms" }} />
-              <div className={`h-6 w-1.5 bg-purple-400 rounded-full ${isPlaying ? 'animate-pulse' : ''}`} style={{ animationDelay: "500ms" }} />
-              <div className={`h-12 w-1.5 bg-purple-400 rounded-full ${isPlaying ? 'animate-pulse' : ''}`} style={{ animationDelay: "600ms" }} />
-              <div className={`h-8 w-1.5 bg-purple-400 rounded-full ${isPlaying ? 'animate-pulse' : ''}`} style={{ animationDelay: "700ms" }} />
-              <div className={`h-3 w-1.5 bg-purple-400 rounded-full ${isPlaying ? 'animate-pulse' : ''}`} style={{ animationDelay: "800ms" }} />
+      {/* Move Folder Dialog */}
+      {movingFolder && (
+        <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 shadow-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-zinc-900 dark:text-white truncate">
+                Move &quot;{movingFolder.name}&quot; to
+              </h3>
+              <button
+                onClick={() => setMovingFolder(null)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-white cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-          )}
-        </div>
-        <div className="p-3 flex flex-col justify-between h-20">
-          <p className="text-sm text-white font-medium truncate">{attachment.name}</p>
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-500">{formatSize(attachment.size)}</p>
-            <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              {isAudio && (
-                <button className="text-gray-400 hover:text-white" title={isPlaying ? "Pause" : "Play"} onClick={toggleAudio}>
-                  {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                </button>
-              )}
-              <button className="text-gray-400 hover:text-white" title="Download" onClick={() => {
-                if (attachment.dataUrl) {
-                  const a = document.createElement("a")
-                  a.href = attachment.dataUrl
-                  a.download = attachment.name
-                  a.click()
-                }
-              }}><Download className="h-3.5 w-3.5" /></button>
-              <button className="text-gray-400 hover:text-red-500" title="Delete" onClick={onRemove}><Trash2 className="h-3.5 w-3.5" /></button>
+            <div className="space-y-1 max-h-60 overflow-y-auto">
+              <button
+                onClick={() => {
+                  const updated = moveFolderToParent(movingFolder.id, null)
+                  setFolders(updated)
+                  setMovingFolder(null)
+                }}
+                className="w-full text-left px-3 py-2 rounded-xl text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-between cursor-pointer"
+              >
+                <div className="flex items-center gap-2">
+                  <Notebook className="h-4 w-4 text-amber-500" />
+                  <span>Root (All Notes)</span>
+                </div>
+                {!movingFolder.parentId && <Check className="h-3.5 w-3.5 text-amber-600 dark:text-yellow-400" />}
+              </button>
+              {allCustomFolders
+                .filter(({ folder }) => folder.id !== movingFolder.id)
+                .map(({ folder, depth }) => (
+                  <button
+                    key={folder.id}
+                    onClick={() => {
+                      const updated = moveFolderToParent(movingFolder.id, folder.id)
+                      setFolders(updated)
+                      setMovingFolder(null)
+                    }}
+                    style={{ paddingLeft: `${12 + depth * 12}px` }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-between cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <FolderIcon className="h-4 w-4 text-amber-500/80 shrink-0" />
+                      <span className="truncate">{folder.name}</span>
+                    </div>
+                    {movingFolder.parentId === folder.id && (
+                      <Check className="h-3.5 w-3.5 text-amber-600 dark:text-yellow-400 shrink-0" />
+                    )}
+                  </button>
+                ))}
             </div>
-          </div>
-        </div>
-      </div>
-      {viewerOpen && isImage && attachment.dataUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setViewerOpen(false)}>
-          <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <button className="absolute top-2 right-2 z-10 text-white/70 hover:text-white p-1 bg-black/60 rounded-full transition-colors" onClick={() => setViewerOpen(false)}>
-              <X className="h-5 w-5" />
-            </button>
-            <img src={attachment.dataUrl} alt={attachment.name} className="max-h-[90vh] max-w-[90vw] object-contain shadow-2xl rounded" />
           </div>
         </div>
       )}
-    </>
+
+      {/* Folder Share Toast */}
+      {folderShareToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-full bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 text-xs font-medium shadow-2xl flex items-center gap-2 transition-all">
+          <Check className="h-3.5 w-3.5 text-amber-500" />
+          <span>{folderShareToast}</span>
+        </div>
+      )}
+    </div>
   )
 }

@@ -29,3 +29,13 @@ export function getTranscriptionLang(): string {
   if (typeof window === "undefined") return DEFAULT_LANG
   return localStorage.getItem(TRANSCRIPTION_LANG_STORAGE) || DEFAULT_LANG
 }
+
+export function setSilenceTimeout(seconds: number): void {
+  if (typeof window === "undefined") return
+  localStorage.setItem(SILENCE_TIMEOUT_STORAGE, String(seconds))
+}
+
+export function setTranscriptionLang(lang: string): void {
+  if (typeof window === "undefined") return
+  localStorage.setItem(TRANSCRIPTION_LANG_STORAGE, lang)
+}
