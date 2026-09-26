@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server"
+import { getAuthenticatedUser } from "@/lib/auth"
 
 export async function POST() {
+  const user = await getAuthenticatedUser()
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 })
+  }
+
   const apiKey = process.env.SONIOX_API_KEY
   if (!apiKey) {
     return NextResponse.json({ error: "Soniox transcription is not configured" }, { status: 503 })

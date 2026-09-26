@@ -1,234 +1,175 @@
-import { NextRequest, NextResponse } from "next/server"
-import { cookies } from "next/headers"
-import { redis } from "@/lib/redis"
-import { vectorIndex } from "@/lib/vector"
-import { ENTITY_KEY, emptyEntityStore, mergeEntities, type EntityStore } from "@/lib/entities"
-import OpenAI, { toFile } from "openai"
+/**
+ * Notes Indexing API
+ * Ingests notes and attachments, converts to Knowledge Markdown, generates semantic chunks,
+ * and indexes into the relational Knowledge Repository (FTS + Vector).
+ */
 
-function getClient(provider: "openai" | "deepseek", reqHeaders: Headers) {
-  if (provider === "deepseek") {
-    return new OpenAI({
-      apiKey: reqHeaders.get("x-deepseek-key") || process.env.DEEPSEEK_API_KEY || "dummy-key",
-      baseURL: "https://api.deepseek.com",
-    });
-  }
-  return new OpenAI({
-    apiKey: reqHeaders.get("x-openai-key") || process.env.OPENAI_API_KEY || "dummy-key",
-  });
-}
+import { NextRequest, NextResponse } from "next/server"
+import { getAuthenticatedUser } from "@/lib/auth"
+import { vectorIndex } from "@/lib/vector"
+import {
+  NoteRepository,
+  KnowledgeRepository,
+  FolderRepository,
+  RecordingRepository,
+  TranscriptRepository,
+  SpeakerRepository,
+  TagRepository,
+} from "@/lib/db/repositories"
+import { processSource } from "@/lib/ingestion/pipeline"
+import { generateKnowledgeMarkdown } from "@/lib/ingestion/markdown-generator"
+import { chunkDocument, generateEmbeddings } from "@/lib/ingestion/chunker"
+import { parseDocx } from "@/lib/ingestion/docx"
+import { parseCsv } from "@/lib/ingestion/csv"
+import { extractTextFromImage } from "@/lib/ingestion/ocr"
+import { db } from "@/lib/db/database"
+import crypto from "crypto"
 
 interface NoteAttachmentInput {
   id: string
   name: string
-  type: "image" | "audio" | "text"
+  type: "image" | "audio" | "text" | "docx" | "csv"
   dataUrl?: string
 }
 
-function attCacheKey(userId: string, attId: string) {
-  return `att_text:${userId}:${attId}`
+interface NoteInput {
+  id: string
+  title: string
+  content: string
+  folderId?: string
+  tags?: string[]
+  attachments?: NoteAttachmentInput[]
 }
 
-async function extractAttachmentText(
-  userId: string,
-  att: NoteAttachmentInput,
-  reqHeaders: Headers
-): Promise<string> {
-  // Check cache first
-  const cached = await redis.get(attCacheKey(userId, att.id))
-  if (cached) return typeof cached === "string" ? cached : JSON.stringify(cached)
-
-  if (!att.dataUrl) return ""
-
-  const [meta, b64] = att.dataUrl.split(",")
-  const mimeMatch = meta.match(/data:([^;]+)/)
-  const mime = mimeMatch?.[1] ?? "application/octet-stream"
-  const buffer = Buffer.from(b64, "base64")
-
-  let text = ""
-  try {
-    if (att.type === "audio") {
-      const openaiFile = await toFile(buffer, att.name, { type: mime })
-      const result = await getClient("openai", reqHeaders).audio.transcriptions.create({ file: openaiFile, model: "whisper-1" })
-      text = `[Audio: ${att.name}]\nTranscript: ${result.text}`
-    } else if (att.type === "image") {
-      const result = await getClient("openai", reqHeaders).chat.completions.create({
-        model: "gpt-5.5",
-        messages: [{
-          role: "user",
-          content: [
-            { type: "text", text: "Describe this image in detail. Include all text, data, people, objects, and any meaningful context." },
-            { type: "image_url", image_url: { url: att.dataUrl } },
-          ],
-        }],
-        max_tokens: 600,
-      })
-      text = `[Image: ${att.name}]\nDescription: ${result.choices[0]?.message?.content ?? ""}`
-    } else {
-      const decoded = buffer.toString("utf-8")
-      text = `[File: ${att.name}]\n${decoded.slice(0, 3000)}`
-    }
-  } catch (err) {
-    console.error(`[att extract] failed for ${att.name}:`, err)
-    text = `[Attachment: ${att.name}] (processing failed)`
+async function parseAttachmentContent(att: NoteAttachmentInput): Promise<{ type: any; markdownContent: string }> {
+  if (!att.dataUrl) {
+    return { type: "text", markdownContent: `[Attachment: ${att.name}]` }
   }
 
-  if (text) await redis.set(attCacheKey(userId, att.id), text, { ex: 60 * 60 * 24 * 30 }) // 30 days
-  return text
+  const [, b64] = att.dataUrl.split(",")
+  if (!b64) {
+    return { type: "text", markdownContent: `[Attachment: ${att.name}]` }
+  }
+
+  const buffer = Buffer.from(b64, "base64")
+  const lowerName = att.name.toLowerCase()
+
+  if (lowerName.endsWith(".docx")) {
+    try {
+      const parsed = parseDocx(buffer)
+      return { type: "docx", markdownContent: parsed.markdown }
+    } catch {
+      return { type: "docx", markdownContent: `[DOCX: ${att.name}] (Parsing failed)` }
+    }
+  }
+
+  if (lowerName.endsWith(".csv")) {
+    try {
+      const text = buffer.toString("utf8")
+      const parsed = parseCsv(text, 100)
+      return { type: "csv", markdownContent: parsed.markdownTable }
+    } catch {
+      return { type: "csv", markdownContent: `[CSV: ${att.name}] (Parsing failed)` }
+    }
+  }
+
+  if (att.type === "image" || /\.(png|jpe?g|webp|gif)$/i.test(lowerName)) {
+    try {
+      const ocr = await extractTextFromImage(buffer)
+      return { type: "image", markdownContent: `*OCR Text (${ocr.engine}):*\n${ocr.text}` }
+    } catch {
+      return { type: "image", markdownContent: `[Image: ${att.name}]` }
+    }
+  }
+
+  // Plain text fallback
+  const text = buffer.toString("utf8")
+  return { type: "text", markdownContent: text.slice(0, 4000) }
 }
 
-async function getAuthenticatedUserId(): Promise<string | null> {
-  const cookieStore = await cookies()
-  const sessionToken = cookieStore.get("session")?.value
-  if (!sessionToken) return null
-  const rawSessionData = await redis.get(`session:${sessionToken}`)
-  if (!rawSessionData) return null
-  const sessionData = typeof rawSessionData === "string" ? JSON.parse(rawSessionData) : rawSessionData
-  return sessionData.email
-}
-
-async function extractEntitiesFromNote(
-  noteId: string,
-  noteTitle: string,
-  content: string,
-  reqHeaders: Headers
-): Promise<Partial<EntityStore>> {
-  const prompt = `Extract structured knowledge entities from this note. Return ONLY valid JSON, no markdown.
-
-Note title: "${noteTitle}"
-Note content:
-${content.slice(0, 4000)}
-
-Return this exact JSON structure (use empty objects/arrays if nothing found):
-{
-  "people": {
-    "<normalized_name_key>": {
-      "name": "Full Name",
-      "aliases": ["nickname", "short name"],
-      "role": "their role/title or unknown",
-      "organization": "their org/company or unknown",
-      "mentions": [{"noteId": "${noteId}", "noteTitle": "${noteTitle}", "snippet": "relevant quote/context under 200 chars"}]
+export async function POST(req: NextRequest) {
+  try {
+    const user = await getAuthenticatedUser()
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
-  },
-  "projects": {
-    "<normalized_project_key>": {
-      "name": "Project Name",
-      "description": "what this project is about",
-      "status": "active/completed/planning/unknown",
-      "team": ["person name"],
-      "mentions": [{"noteId": "${noteId}", "noteTitle": "${noteTitle}", "snippet": "relevant context under 200 chars"}]
-    }
-  },
-  "conversations": [
-    {
-      "id": "${noteId}_conv_0",
-      "participants": ["name1", "name2"],
-      "topic": "what was discussed",
-      "summary": "key outcomes/decisions in 1-2 sentences",
-      "noteId": "${noteId}",
-      "noteTitle": "${noteTitle}",
-      "date": "ISO date if mentioned or empty string"
-    }
-  ]
-}`
 
-  const response = await getClient("deepseek", reqHeaders).chat.completions.create({
-    model: "deepseek-chat",
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0,
-  })
+    const { notes } = (await req.json()) as { notes: NoteInput[] }
+    if (!notes?.length) return NextResponse.json({ indexed: 0 })
 
-  const raw = response.choices[0]?.message?.content ?? "{}"
-  const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim()
-  return JSON.parse(cleaned)
+    const userFolders = await FolderRepository.listByUser(user.id)
+    const folderMap = new Map(userFolders.map((f) => [f.id, f.name]))
+
+    const userSpeakers = await SpeakerRepository.listByUser(user.id)
+    const speakerMap = new Map(userSpeakers.map((s) => [s.id, s]))
+
+    const apiKey = req.headers.get("x-openai-key") || process.env.OPENAI_API_KEY
+    let totalIndexedChunks = 0
+
+    for (const noteInput of notes) {
+      // Enforce tenant ownership: skip notes owned by another user
+      const existingRows = await db.query<{ user_id: string }>(
+        "SELECT user_id FROM notes WHERE id = ? LIMIT 1",
+        [noteInput.id]
+      )
+      if (existingRows.length > 0 && existingRows[0].user_id !== user.id) {
+        continue
+      }
+
+      // Upsert note if needed so it is persisted
+      await NoteRepository.upsert({
+        id: noteInput.id,
+        user_id: user.id,
+        folder_id: noteInput.folderId,
+        title: noteInput.title,
+        content: noteInput.content,
+      })
+
+      // Add tags if provided
+      if (noteInput.tags?.length) {
+        for (const tagName of noteInput.tags) {
+          const tag = await TagRepository.upsert(user.id, tagName)
+          await NoteRepository.addTag(noteInput.id, tag.id)
+        }
+      }
+
+      // Process via deterministic knowledge pipeline
+      const res = await processSource(user.id, "note", noteInput.id, { apiKey })
+      if (res.success && res.chunksCount) {
+        totalIndexedChunks += res.chunksCount
+      }
+    }
+
+    return NextResponse.json({ indexed: notes.length, chunks: totalIndexedChunks })
+  } catch (err) {
+    console.error("[/api/notes/index POST]", err)
+    return NextResponse.json({ error: "Failed to index notes" }, { status: 500 })
+  }
 }
 
 export async function DELETE(req: NextRequest) {
   try {
-    const userId = await getAuthenticatedUserId()
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    const user = await getAuthenticatedUser()
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
 
-    const { noteId } = await req.json() as { noteId: string }
-    if (!noteId) return NextResponse.json({ error: "Missing noteId" }, { status: 400 })
+    const { noteId } = (await req.json()) as { noteId: string }
+    if (!noteId) {
+      return NextResponse.json({ error: "Missing noteId" }, { status: 400 })
+    }
 
-    await vectorIndex.delete(`${userId}:${noteId}`)
+    // 1. Delete derived knowledge documents and chunks (tenant isolated)
+    await KnowledgeRepository.deleteBySource("note", noteId, user.id)
+
+    // 2. Upstash vector delete if configured
+    if (process.env.UPSTASH_VECTOR_REST_URL) {
+      vectorIndex.delete(`${user.email}:${noteId}`).catch(() => {})
+    }
+
     return NextResponse.json({ ok: true })
   } catch (err) {
     console.error("[/api/notes/index DELETE]", err)
     return NextResponse.json({ error: "Failed to remove from index" }, { status: 500 })
   }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    const userId = await getAuthenticatedUserId()
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-
-    const { notes } = await req.json() as {
-      notes: { id: string; title: string; content: string; attachments?: NoteAttachmentInput[] }[]
-    }
-
-    if (!notes?.length) return NextResponse.json({ indexed: 0 })
-
-    // Process attachments and build enriched text per note
-    const enrichedNotes = await Promise.all(
-      notes.map(async (note) => {
-        let attachmentText = ""
-        if (note.attachments?.length) {
-          const parts = await Promise.all(
-            note.attachments.map((att) => extractAttachmentText(userId, att, req.headers))
-          )
-          attachmentText = parts.filter(Boolean).join("\n\n")
-        }
-        return { ...note, attachmentText }
-      })
-    )
-
-    // Vector index upsert — include attachment text in indexed data
-    const records = enrichedNotes.map((note) => {
-      const fullText = [note.title, note.content, note.attachmentText].filter(Boolean).join("\n\n")
-      const snippet = note.content.slice(0, 800) + (note.attachmentText ? `\n\n${note.attachmentText.slice(0, 200)}` : "")
-      return {
-        id: `${userId}:${note.id}`,
-        data: fullText.slice(0, 8000),
-        metadata: { userId, noteId: note.id, title: note.title, snippet: snippet.slice(0, 1000) },
-      }
-    })
-    await vectorIndex.upsert(records)
-
-    // Entity extraction — run async, don't block the response
-    extractAndStoreEntities(userId, enrichedNotes.map(n => ({
-      id: n.id,
-      title: n.title,
-      content: [n.content, n.attachmentText].filter(Boolean).join("\n\n"),
-    })), req.headers).catch((err) =>
-      console.error("[/api/notes/index] entity extraction failed:", err)
-    )
-
-    return NextResponse.json({ indexed: records.length })
-  } catch (err) {
-    console.error("[/api/notes/index]", err)
-    return NextResponse.json({ error: "Failed to index notes" }, { status: 500 })
-  }
-}
-
-async function extractAndStoreEntities(
-  userId: string,
-  notes: { id: string; title: string; content: string }[],
-  reqHeaders: Headers
-) {
-  const raw = await redis.get(ENTITY_KEY(userId))
-  let store = raw
-    ? (typeof raw === "string" ? JSON.parse(raw) : raw) as EntityStore
-    : emptyEntityStore()
-
-  for (const note of notes) {
-    try {
-      const extracted = await extractEntitiesFromNote(note.id, note.title, note.content, reqHeaders)
-      store = mergeEntities(store, extracted, note.id, note.title)
-    } catch (err) {
-      console.error(`[entities] failed on note ${note.id}:`, err)
-    }
-  }
-
-  await redis.set(ENTITY_KEY(userId), JSON.stringify(store))
 }

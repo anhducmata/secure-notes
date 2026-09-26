@@ -7,15 +7,16 @@ interface EncryptedSharePayload {
 }
 
 interface ShareLinkData {
+  type?: "note" | "folder"
   encryptedData: EncryptedSharePayload
   createdAt: string
   creatorEmail: string
+  permission?: "read" | "write"
 }
 
 /**
  * GET /api/share/[shareId]
- * Retrieves and consumes a one-time share link.
- * After successful retrieval, the link is deleted (one-time use).
+ * Retrieves a shared note or folder.
  * Returns only the encrypted payload; decryption happens client-side
  * using the key embedded in the share URL fragment.
  */
@@ -34,38 +35,35 @@ export async function GET(
     }
 
     const key = SHARE_LINK_KEY(shareId)
-    
-    // Atomically read and delete the share. This prevents two concurrent requests
-    // from both consuming the same one-time link.
-    const rawData = await redis.getdel(key)
+    const rawData = await redis.get(key)
 
     if (!rawData) {
       return NextResponse.json(
         { 
-          error: "Link expired or already used",
-          message: "This share link has either expired, been viewed already, or doesn't exist."
+          error: "Link expired or not found",
+          message: "This share link has either expired or doesn't exist."
         },
         { status: 404 }
       )
     }
 
-    // Parse the data
     const shareData: ShareLinkData = typeof rawData === "string" 
       ? JSON.parse(rawData) 
       : rawData as ShareLinkData
 
-    // Return only the encrypted payload – the server never exposes plaintext
     return NextResponse.json({
       success: true,
-      note: {
+      share: {
+        type: shareData.type || "note",
         encryptedData: shareData.encryptedData,
         sharedAt: shareData.createdAt,
+        permission: shareData.permission || "read",
       }
     })
   } catch (err) {
     console.error("[v0] Share link retrieval error:", err)
     return NextResponse.json(
-      { error: "Failed to retrieve shared note" },
+      { error: "Failed to retrieve shared item" },
       { status: 500 }
     )
   }

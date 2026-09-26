@@ -3,8 +3,8 @@ import { cookies } from "next/headers"
 import { redis, SHARE_LINK_KEY } from "@/lib/redis"
 import { nanoid } from "nanoid"
 
-// TTL for share links: 24 hours
-const SHARE_LINK_TTL = 60 * 60 * 24 // 24 hours in seconds
+// TTL for share links: 7 days
+const SHARE_LINK_TTL = 60 * 60 * 24 * 7 // 7 days in seconds
 
 interface EncryptedSharePayload {
   ciphertext: string
@@ -12,14 +12,13 @@ interface EncryptedSharePayload {
 }
 
 interface ShareLinkData {
+  type: "note" | "folder"
   encryptedData: EncryptedSharePayload
   createdAt: string
   creatorEmail: string
+  permission: "read" | "write"
 }
 
-/**
- * Validates that the share payload contains the required encrypted fields.
- */
 function isValidEncryptedSharePayload(payload: unknown): payload is EncryptedSharePayload {
   if (!payload || typeof payload !== "object") return false
   const p = payload as Record<string, unknown>
@@ -31,9 +30,6 @@ function isValidEncryptedSharePayload(payload: unknown): payload is EncryptedSha
   )
 }
 
-/**
- * Get authenticated user email from session
- */
 async function getAuthenticatedUserEmail(): Promise<string | null> {
   const cookieStore = await cookies()
   const sessionToken = cookieStore.get("session")?.value
@@ -49,10 +45,8 @@ async function getAuthenticatedUserEmail(): Promise<string | null> {
 
 /**
  * POST /api/share
- * Creates a one-time share link for a note.
- * The caller must encrypt the note content client-side and send only the
- * encrypted payload. The decryption key must be embedded in the share URL
- * fragment by the caller so it never reaches this server.
+ * Creates a share link for a note or folder.
+ * Caller encrypts content client-side; server stores ciphertext.
  */
 export async function POST(request: Request) {
   try {
@@ -66,11 +60,11 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { encryptedData } = body
+    const { encryptedData, type = "note", permission = "read" } = body
 
     if (!isValidEncryptedSharePayload(encryptedData)) {
       return NextResponse.json(
-        { error: "Invalid payload: note content must be encrypted before sharing" },
+        { error: "Invalid payload: content must be encrypted before sharing" },
         { status: 400 }
       )
     }
@@ -78,11 +72,12 @@ export async function POST(request: Request) {
     // Generate a unique share ID
     const shareId = nanoid(21)
     
-    // Store only the encrypted payload – the server never sees plaintext
     const shareData: ShareLinkData = {
+      type: type === "folder" ? "folder" : "note",
       encryptedData,
       createdAt: new Date().toISOString(),
       creatorEmail: userEmail,
+      permission: permission === "write" ? "write" : "read",
     }
 
     await redis.set(
@@ -99,7 +94,9 @@ export async function POST(request: Request) {
       success: true, 
       shareUrl,
       shareId,
-      expiresIn: "24 hours (or after one view)"
+      type: shareData.type,
+      permission: shareData.permission,
+      expiresIn: "7 days"
     })
   } catch (err) {
     console.error("[v0] Share link creation error:", err)
