@@ -6,15 +6,18 @@ import FoundationNetworking
 public struct SonioxToken: Codable, Equatable, Sendable {
     public var text: String
     public var isFinal: Bool
+    public var speaker: String?
 
     enum CodingKeys: String, CodingKey {
         case text
         case isFinal = "is_final"
+        case speaker
     }
 
-    public init(text: String, isFinal: Bool) {
+    public init(text: String, isFinal: Bool, speaker: String? = nil) {
         self.text = text
         self.isFinal = isFinal
+        self.speaker = speaker
     }
 }
 
@@ -86,7 +89,7 @@ public actor SonioxWebSocketClient {
             "num_channels": 1,
             "language": configuration.language,
             "enable_endpoint_detection": true,
-            "enable_speaker_diarization": false,
+            "enable_speaker_diarization": true,
         ] as [String : Any]
 
         let data = try JSONSerialization.data(withJSONObject: handshake)
@@ -159,6 +162,25 @@ public actor TranscriptAssembler {
 
         for token in response.tokens {
             let text = token.text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            
+            // If the token specifies a speaker, resolve speaker.
+            // If diarization identifies speaker "1" or "me", map to .me.
+            // If diarization is not possible or unknown/other, default to .other ("Other").
+            if let tokenSpeaker = token.speaker {
+                let resolvedSpeaker: TranscriptSpeaker
+                let lower = tokenSpeaker.lowercased()
+                if lower == "0" || lower == "1" || lower == "me" || lower == "you" {
+                    resolvedSpeaker = .me
+                } else {
+                    resolvedSpeaker = .other
+                }
+                
+                if resolvedSpeaker != currentSpeaker && !currentText.isEmpty {
+                    _ = flush()
+                    currentSpeaker = resolvedSpeaker
+                }
+            }
+
             if token.isFinal {
                 if currentText.isEmpty {
                     segmentTimestamp = Date()

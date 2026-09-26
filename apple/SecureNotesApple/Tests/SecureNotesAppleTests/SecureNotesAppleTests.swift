@@ -13,6 +13,16 @@ import Testing
     #expect(transcript.renderedText == "You: hello there")
 }
 
+@Test func transcriptAssemblerDefaultsUndiarizedOrOtherSpeakerToOther() async throws {
+    let assembler = TranscriptAssembler(speaker: .other)
+    _ = await assembler.consume(SonioxResponse(tokens: [
+        SonioxToken(text: "this is from another speaker", isFinal: true, speaker: "speaker_2"),
+    ]))
+    let transcript = await assembler.flush()
+
+    #expect(transcript.renderedText == "Other: this is from another speaker")
+}
+
 #if canImport(CryptoKit) && canImport(CommonCrypto)
 @Test func encryptsAndDecryptsNotes() throws {
     let note = SecureNote(

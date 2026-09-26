@@ -2,6 +2,13 @@
 import Foundation
 import SwiftUI
 
+public enum AppleTranscriptionEngine: String, CaseIterable, Identifiable, Sendable {
+    case soniox = "Soniox (Diarized)"
+    case appleOnDevice = "Apple Speech (Offline, Other)"
+
+    public var id: String { rawValue }
+}
+
 @MainActor
 public final class AppleNotesAppModel: ObservableObject {
     @Published public private(set) var notes: [SecureNote] = []
@@ -9,6 +16,8 @@ public final class AppleNotesAppModel: ObservableObject {
     @Published public var password = ""
     @Published public var sonioxAPIKey = ""
     @Published public var transcriptionLanguage = "en"
+    @Published public var transcriptionEngine: AppleTranscriptionEngine = .soniox
+    @Published public var isRecording = false
     @Published public var status = "Ready"
 
     private let store: SecureNotesFileStore
@@ -128,13 +137,31 @@ public struct SecureNotesAppleRootView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            HStack {
-                SecureField("Encryption password", text: $model.password)
-                    .textFieldStyle(.roundedBorder)
-                TextField("Soniox API key", text: $model.sonioxAPIKey)
-                    .textFieldStyle(.roundedBorder)
-                Button("Load") { Task { await model.loadNotes() } }
-                Button("Save") { Task { await model.persistNotes() } }
+            VStack(spacing: 8) {
+                HStack {
+                    Picker("Engine", selection: $model.transcriptionEngine) {
+                        ForEach(AppleTranscriptionEngine.allCases) { engine in
+                            Text(engine.rawValue).tag(engine)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text(model.status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                HStack {
+                    SecureField("Encryption password", text: $model.password)
+                        .textFieldStyle(.roundedBorder)
+                    if model.transcriptionEngine == .soniox {
+                        TextField("Soniox API key", text: $model.sonioxAPIKey)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    Button("Load") { Task { await model.loadNotes() } }
+                    Button("Save") { Task { await model.persistNotes() } }
+                }
             }
             .padding()
             .background(.ultraThinMaterial)
