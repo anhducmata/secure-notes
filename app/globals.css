@@ -3,6 +3,65 @@
 @tailwind utilities;
 
 :root {
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  --primary: 240 5.9% 10%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 240 5.9% 10%;
+  --radius: 0.75rem;
+  --sidebar-background: 0 0% 98%;
+  --sidebar-foreground: 240 5.3% 26.1%;
+  --sidebar-primary: 240 5.9% 10%;
+  --sidebar-primary-foreground: 0 0% 98%;
+  --sidebar-accent: 240 4.8% 95.9%;
+  --sidebar-accent-foreground: 240 5.9% 10%;
+  --sidebar-border: 220 13% 91%;
+  --sidebar-ring: 217.2 91.2% 59.8%;
+  --accent-color: 217, 119, 6;
+}
+
+.dark {
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 0 0% 98%;
+  --primary-foreground: 240 5.9% 10%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 240 4.9% 83.9%;
+  --sidebar-background: 240 5.9% 10%;
+  --sidebar-foreground: 240 4.8% 95.9%;
+  --sidebar-primary: 224.3 76.3% 48%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 240 3.7% 15.9%;
+  --sidebar-accent-foreground: 240 4.8% 95.9%;
+  --sidebar-border: 240 3.7% 15.9%;
+  --sidebar-ring: 217.2 91.2% 59.8%;
   --accent-color: 234, 179, 8;
 }
 
@@ -10,8 +69,6 @@ html,
 body {
   height: 100%;
   overflow: hidden;
-  background-color: black;
-  color: white;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -97,7 +154,49 @@ body {
   to   { opacity: 1; }
 }
 
-/* Input placeholder color */
-input::placeholder {
+/* Input & textarea placeholder color */
+input::placeholder,
+textarea::placeholder {
+  color: rgba(148, 163, 184, 0.7);
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
   color: rgba(255, 255, 255, 0.3);
 }
+
+/* Modal & popover dark mode surfaces */
+.dark [data-popover-container],
+.dark .mac-popover {
+  background-color: #18181b !important;
+  border-color: #27272a !important;
+  color: #ffffff !important;
+}
+
+.dark [data-popover-beak] {
+  background-color: #18181b !important;
+  border-color: #27272a !important;
+}
+
+/* Hover highlights inside dark popovers & modals */
+.dark [data-popover-container] button:not([data-primary-btn]):hover,
+.dark [data-popover-container] [role="menuitem"]:hover,
+.dark [data-popover-container] [role="button"]:hover,
+.dark [data-popover-container] [data-hover-row]:hover,
+.dark .mac-popover button:not([data-primary-btn]):hover,
+.dark .mac-popover [data-hover-row]:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Red sign out button hover in dark mode */
+.dark [data-popover-container] [data-hover-danger]:hover {
+  background-color: rgba(239, 68, 68, 0.15) !important;
+}
+
+/* Preserve active selected states inside dark popovers */
+.dark [data-popover-container] [data-active="true"],
+.dark [data-popover-container] [data-active="true"]:hover {
+  background-color: rgba(234, 179, 8, 0.18) !important;
+  color: #facc15 !important;
+}
+

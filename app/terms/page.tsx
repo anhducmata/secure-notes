@@ -2,34 +2,38 @@
 
 import Link from "next/link"
 import { ArrowLeft, Shield, Lock, Eye, Server } from "lucide-react"
+import { ThemeToggle } from "@/components/theme-toggle"
 
 export default function TermsPage() {
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-[#fafafb] text-zinc-900 dark:bg-black dark:text-white transition-colors duration-200">
       <div className="mx-auto max-w-2xl px-6 py-12">
-        {/* Back button */}
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors mb-8"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Notes
-        </Link>
+        {/* Navigation & Theme Toggle */}
+        <div className="flex items-center justify-between mb-8">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Notes
+          </Link>
+          <ThemeToggle />
+        </div>
 
         {/* Header */}
         <div className="mb-10">
           <h1 className="text-3xl font-bold tracking-tight mb-3">Terms of Service</h1>
-          <p className="text-gray-400 text-sm">Last updated: March 2026</p>
+          <p className="text-zinc-500 dark:text-zinc-400 text-sm">Last updated: March 2026</p>
         </div>
 
         {/* Content */}
         <div className="space-y-8">
           <section>
             <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Shield className="h-5 w-5 text-yellow-500" />
+              <Shield className="h-5 w-5 text-amber-600 dark:text-yellow-500" />
               Agreement to Terms
             </h2>
-            <p className="text-gray-300 leading-relaxed">
+            <p className="text-zinc-600 dark:text-zinc-300 leading-relaxed">
               By accessing or using Notes, you agree to be bound by these Terms of Service. 
               If you do not agree to these terms, please do not use the service.
             </p>
@@ -37,10 +41,10 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Lock className="h-5 w-5 text-yellow-500" />
+              <Lock className="h-5 w-5 text-amber-600 dark:text-yellow-500" />
               End-to-End Encryption
             </h2>
-            <div className="space-y-4 text-gray-300 leading-relaxed">
+            <div className="space-y-4 text-zinc-600 dark:text-zinc-300 leading-relaxed">
               <p>
                 Notes uses client-side end-to-end encryption to protect your data. This means:
               </p>
@@ -51,10 +55,9 @@ export default function TermsPage() {
                 <li>Only you, with your password, can decrypt and view your notes</li>
               </ul>
               <div 
-                className="p-4 rounded-lg mt-4"
-                style={{ background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.2)" }}
+                className="p-4 rounded-lg mt-4 bg-amber-500/10 border border-amber-500/20 dark:bg-yellow-500/10 dark:border-yellow-500/20"
               >
-                <p className="text-yellow-500/90 text-sm font-medium">
+                <p className="text-amber-800 dark:text-yellow-500/90 text-sm font-medium">
                   Important: If you lose your password, we cannot recover your notes. 
                   There is no password recovery for your encrypted content because we do not have access to it.
                 </p>
@@ -64,10 +67,10 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Eye className="h-5 w-5 text-yellow-500" />
+              <Eye className="h-5 w-5 text-amber-600 dark:text-yellow-500" />
               What We Store
             </h2>
-            <div className="space-y-4 text-gray-300 leading-relaxed">
+            <div className="space-y-4 text-zinc-600 dark:text-zinc-300 leading-relaxed">
               <p>We store only the following data:</p>
               <ul className="list-disc list-inside space-y-2 ml-4">
                 <li><strong>Email address:</strong> For account identification and communication</li>
@@ -81,10 +84,10 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Server className="h-5 w-5 text-yellow-500" />
+              <Server className="h-5 w-5 text-amber-600 dark:text-yellow-500" />
               What We Do NOT Store
             </h2>
-            <div className="space-y-4 text-gray-300 leading-relaxed">
+            <div className="space-y-4 text-zinc-600 dark:text-zinc-300 leading-relaxed">
               <ul className="list-disc list-inside space-y-2 ml-4">
                 <li>Plaintext passwords</li>
                 <li>Unencrypted note content</li>
@@ -96,7 +99,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold mb-4">User Responsibilities</h2>
-            <div className="space-y-4 text-gray-300 leading-relaxed">
+            <div className="space-y-4 text-zinc-600 dark:text-zinc-300 leading-relaxed">
               <p>As a user, you are responsible for:</p>
               <ul className="list-disc list-inside space-y-2 ml-4">
                 <li>Maintaining the security of your account credentials</li>
@@ -109,7 +112,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold mb-4">Service Availability</h2>
-            <p className="text-gray-300 leading-relaxed">
+            <p className="text-zinc-600 dark:text-zinc-300 leading-relaxed">
               We strive to provide reliable service but do not guarantee uninterrupted access. 
               We may modify, suspend, or discontinue the service at any time with reasonable notice.
             </p>
@@ -117,7 +120,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold mb-4">Limitation of Liability</h2>
-            <p className="text-gray-300 leading-relaxed">
+            <p className="text-zinc-600 dark:text-zinc-300 leading-relaxed">
               Notes is provided &quot;as is&quot; without warranties of any kind. We are not liable for 
               any data loss resulting from forgotten passwords, as the encryption design means 
               we cannot recover your data.
@@ -126,7 +129,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold mb-4">Changes to Terms</h2>
-            <p className="text-gray-300 leading-relaxed">
+            <p className="text-zinc-600 dark:text-zinc-300 leading-relaxed">
               We may update these terms from time to time. Continued use of the service after 
               changes constitutes acceptance of the new terms.
             </p>
@@ -134,18 +137,18 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold mb-4">Contact</h2>
-            <p className="text-gray-300 leading-relaxed">
+            <p className="text-zinc-600 dark:text-zinc-300 leading-relaxed">
               If you have questions about these Terms, please contact us through the app.
             </p>
           </section>
         </div>
 
         {/* Footer links */}
-        <div className="mt-12 pt-8 border-t border-gray-800 flex gap-6 text-sm">
-          <Link href="/privacy" className="text-yellow-500 hover:text-yellow-400 transition-colors">
+        <div className="mt-12 pt-8 border-t border-zinc-200 dark:border-zinc-800 flex gap-6 text-sm">
+          <Link href="/privacy" className="text-amber-600 hover:text-amber-700 dark:text-yellow-500 dark:hover:text-yellow-400 transition-colors font-medium">
             Privacy Policy
           </Link>
-          <Link href="/" className="text-gray-400 hover:text-white transition-colors">
+          <Link href="/" className="text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors">
             Back to Notes
           </Link>
         </div>
