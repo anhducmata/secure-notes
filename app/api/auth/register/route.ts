@@ -50,8 +50,22 @@ export async function POST(request: Request) {
       createdAt: Date.now(),
     }
 
-    // Store user data
+    // Store user data in Redis
     await redis.hset("users", { [email.toLowerCase()]: JSON.stringify(userData) })
+
+    // Store user data in Relational Database
+    try {
+      const { UserRepository } = await import("@/lib/db/repositories")
+      await UserRepository.create({
+        id: `usr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+        email: email.toLowerCase(),
+        password_hash: hashedPassword,
+        name,
+        verified: isLocalDev ? true : false,
+      })
+    } catch (e) {
+      console.warn("Relational user sync notice:", e)
+    }
 
     if (isLocalDev) {
       return NextResponse.json({

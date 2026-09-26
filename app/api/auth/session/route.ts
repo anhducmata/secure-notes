@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
 import { redis } from "@/lib/redis"
-import { decryptFromSession } from "@/app/api/auth/login/route"
+import { decryptFromSession } from "@/lib/session-crypto"
 
 export async function GET() {
   try {

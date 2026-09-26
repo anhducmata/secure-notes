@@ -47,7 +47,8 @@ export async function POST(request: Request) {
     const userName = userData.name || "there"
 
     try {
-      await resend.emails.send({
+      if (resend) {
+        await resend.emails.send({
         from: "Notes App <onboarding@freenotes.space>",
         to: email,
         subject: "Reset your password",
@@ -109,6 +110,7 @@ export async function POST(request: Request) {
           </html>
         `,
       })
+      }
     } catch (emailError) {
       console.error("Failed to send reset email:", emailError)
     }

@@ -32,6 +32,8 @@ package-lock.json
 # Local dev storage
 .local-redis.json
 .local-notes/
+.storage/
+.pnpm-store/
 
 # build
 dist/

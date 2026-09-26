@@ -44,13 +44,59 @@ export interface NoteAttachment {
 export interface DecryptedNote {
   title: string
   content: string
+  tags?: string[]
+  transcriptSegments?: Array<{
+    id: string
+    speaker_id: string
+    start: number
+    end: number
+    text: string
+  }>
+  audioRecording?: {
+    dataUrl: string
+    duration: number
+    mimeType: string
+  }
   attachments?: NoteAttachment[]
+  sharedWith?: Array<{
+    id: string
+    email: string
+    name: string
+    avatar?: string
+    permission: "read" | "write"
+    sharedAt: string
+  }>
+}
+
+/**
+ * Resolves the display title for a note.
+ * If title is not set (or is empty, "Untitled", "New Note"),
+ * defaults to the first non-empty line of the note's content.
+ */
+export function getNoteDisplayTitle(note?: { title?: string; content?: string } | null): string {
+  if (!note) return ""
+  const title = (note.title || "").trim()
+  const lower = title.toLowerCase()
+  if (title && lower !== "untitled" && lower !== "new note") {
+    return title
+  }
+  if (note.content && note.content.trim()) {
+    const lines = note.content.trim().split("\n")
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (trimmed) return trimmed
+    }
+  }
+  return ""
 }
 
 // ─── Helper Functions ─────────────────────────────────────────────────────────
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
+function arrayBufferToBase64(buffer: ArrayBuffer | Uint8Array | ArrayBufferView): string {
+  const bytes =
+    buffer instanceof Uint8Array
+      ? buffer
+      : new Uint8Array("buffer" in buffer ? (buffer.buffer as ArrayBuffer) : buffer)
   let binary = ""
   for (let i = 0; i < bytes.byteLength; i++) {
     binary += String.fromCharCode(bytes[i])
@@ -99,7 +145,7 @@ export async function deriveKeyFromPassword(
   return crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt: salt,
+      salt: salt as unknown as BufferSource,
       iterations: PBKDF2_ITERATIONS,
       hash: "SHA-256",
     },
@@ -157,7 +203,7 @@ export async function encryptNote(
 
   // Encrypt with AES-GCM
   const ciphertextBuffer = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: iv },
+    { name: "AES-GCM", iv: iv as unknown as BufferSource },
     key,
     plaintextBuffer
   )
@@ -301,7 +347,7 @@ export async function encryptForShare(
   const iv = generateRandomBytes(IV_LENGTH)
   const plaintextBuffer = new TextEncoder().encode(plaintext)
   const ciphertextBuffer = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
+    { name: "AES-GCM", iv: iv as unknown as BufferSource },
     key,
     plaintextBuffer
   )
